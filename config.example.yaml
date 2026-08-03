@@ -1,30 +1,39 @@
 # Copy to config.yaml and edit:
 #   cp config.example.yaml config.yaml
 
-# HARD RULE: this kit never places an order. dry_run must stay true.
 dry_run: true
 
-label: "iPhone 17 256GB Đen (dynamic SKU practice)"
+label: "iPhone 17 256GB Đen (practice) — swap label at launch"
 
-# ---------------------------------------------------------------------------
-# DYNAMIC SKU (recommended for launch)
-# Timed run opens family_url, polls until configure unlocks, then picks
-# screensize (Pro) → color → capacity from product_prefs (ordered fallbacks).
-# ---------------------------------------------------------------------------
+# =============================================================================
+# FAMILY URL — timed run polls until configure unlocks
+# =============================================================================
+# PRACTICE (working):
 family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17"
-# Optional extras to poll if the primary 404s at T-0:
+
+# --- RUMORS ONLY (not live until Apple publishes) — uncomment at launch -----
+# Fall 2026 rumor = Pro / Pro Max share one page (same pattern as iphone-17-pro):
+# family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro"
+#
 # family_urls:
-#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-17-pro"
+#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro"   # MOST LIKELY fall 2026
+#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-18"       # rumor: maybe spring 2027
+#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-air"      # Air 2 slug unknown
+#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-fold"     # foldable wild-card
+#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-ultra"    # alternate rumor name
+#
+# Keep practice family_url until launch morning — rumor links 404 early.
+
 unlock_timeout_sec: 180
 
 product_prefs:
-  # Pro pages only (ignored on plain iPhone 17 / Air)
-  screensizes: ["6,3", "6.3", "6_3"]
+  # Pro pages only: 6.3 = Pro, 6.9 = Pro Max (rumor: same for 18)
+  screensizes: ["6,3", "6.3", "6_3inch", "6_3"]
+  # colors: practice iPhone 17 VN — replace with real 18 Pro names at launch
   colors: ["Đen", "black"]
   storages: ["256GB", "256gb", "256"]
 
-# Known-live deep link — used for --warm-only SSO fuel + fallback if you
-# disable product_prefs. Keep an iPhone 17 configured URL for warm.
+# WORKING warm deep link (iPhone 17 6.3" 256GB Đen) — keep for --warm-only SSO
 warm_product_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17/m%C3%A0n-h%C3%ACnh-6,3-inch-256gb-%C4%91en"
 product_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17/m%C3%A0n-h%C3%ACnh-6,3-inch-256gb-%C4%91en"
 
@@ -34,7 +43,6 @@ session_url: "https://www.apple.com/vn/shop/goto/account"
 launch_at: "2026-09-19T19:00:00"
 timezone: "Asia/Ho_Chi_Minh"
 warm_minutes_before: 10
-
 browser: "Google Chrome"
 
 manual_clicks:
