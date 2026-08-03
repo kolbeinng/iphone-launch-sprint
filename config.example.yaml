@@ -1,0 +1,61 @@
+# Copy to config.yaml and edit:
+#   cp config.example.yaml config.yaml
+
+# HARD RULE: this kit never places an order. dry_run must stay true.
+dry_run: true
+
+# Display label only (for logs / notifications)
+# Practice target: iPhone 17. Swap URL/label for iPhone 18 at launch.
+label: "iPhone 17 256GB Đen (practice for iPhone 18 launch)"
+
+# Exact configured product URL — skips model/color/storage ONLY.
+# Trade-in + AppleCare still appear on this page (see manual_clicks / assist.py).
+# At iPhone 18 launch: replace with the fully configured apple.com/vn buy URL.
+product_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17/m%C3%A0n-h%C3%ACnh-6,3-inch-256gb-%C4%91en"
+
+# Warm/session URLs — account page is the real signed-in check (homepage is not).
+warm_url: "https://www.apple.com/vn/shop/goto/account"
+session_url: "https://www.apple.com/vn/shop/goto/account"
+
+# Launch instant in Asia/Ho_Chi_Minh (Vietnam).
+# For a fake dry-run, prefer: python launch.py --in 2m
+launch_at: "2026-09-19T08:00:00"
+timezone: "Asia/Ho_Chi_Minh"
+
+# Minutes before launch_at to open warm_url
+warm_minutes_before: 10
+
+# Browser used by `open -a` for launch.py / watch.py.
+# MUST be the browser where you are signed into Apple ID.
+# If you use Chrome daily, set: "Google Chrome"
+browser: "Safari"
+
+# Exact Vietnamese labels to click after the deep link opens
+manual_clicks:
+  no_trade_in: "Không đổi cũ lấy mới"
+  no_applecare: "Không có bảo hành AppleCare+"
+
+# Checkout (assist stops at payment — never clicks Đặt hàng)
+checkout:
+  location_city: "Thành phố Hồ Chí Minh"
+  location_district: "Quận Bình Thạnh"
+  use_new_address: true
+  address:
+    first_name: "Your"
+    last_name: "Name"
+    street: "Street address"
+    street2: ""
+    state: "Thành phố Hồ Chí Minh"
+    city: "Quận Bình Thạnh"
+    district: "Phường 11"   # phường trước sáp nhập
+    postal_code: ""
+  contact:
+    email: "you@example.com"
+    phone: "0900000000"
+
+# Optional light watcher (python watch.py)
+watcher:
+  enabled: true
+  poll_seconds: 20
+  window_minutes_before: 15
+  window_minutes_after: 30
