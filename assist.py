@@ -129,6 +129,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Selector timeout in ms for trade-in / AppleCare clicks (default 45000)",
     )
     p.add_argument(
+        "--unlock-timeout-sec",
+        type=int,
+        default=0,
+        help="Max seconds to poll family page until configure unlocks (0 = config/default)",
+    )
+    p.add_argument(
         "--keep-open-sec",
         type=int,
         default=30,
@@ -326,6 +332,263 @@ def _product_family_url(product_url: str) -> str:
         family = "/" + "/".join(segs[:-1])
         return urlunsplit((parts.scheme, parts.netloc, family, "", ""))
     return product_url
+
+
+def _norm_pref(s: str) -> str:
+    """Normalize preference / label text for fuzzy match."""
+    s = (s or "").strip().lower()
+    # VN UI often uses comma decimals; autom uses underscores
+    s = s.replace(",", ".").replace("_", ".")
+    s = re.sub(r"\s+", "", s)
+    return s
+
+
+def _pref_matches(option: dict, pref: str) -> bool:
+    """True if preference matches autom / value / label of a dimension option."""
+    want = _norm_pref(pref)
+    if not want:
+        return False
+    haystacks = [
+        _norm_pref(option.get("autom") or ""),
+        _norm_pref(option.get("value") or ""),
+        _norm_pref(option.get("label") or ""),
+    ]
+    for h in haystacks:
+        if not h:
+            continue
+        if want == h or want in h or h in want:
+            return True
+        # 256 vs 256gb
+        if want.rstrip("gb") and want.rstrip("gb") == h.rstrip("gb"):
+            return True
+        # 6.3 vs dimensionScreensize6.3inch (dots already normalized)
+        if len(want) >= 2 and want.replace(".", "") in h.replace(".", ""):
+            return True
+    return False
+
+
+def _list_dimension_options(page, dimension_name: str) -> list[dict]:
+    """Read radio options for dimensionColor / dimensionCapacity / dimensionScreensize."""
+    return page.evaluate(
+        """(name) => {
+          const inputs = Array.from(
+            document.querySelectorAll('input[type="radio"][name="' + name + '"]')
+          );
+          return inputs.map((el) => {
+            const lab = el.id
+              ? document.querySelector('label[for="' + el.id + '"]')
+              : null;
+            const labelEl = lab || el.closest('label');
+            const label = ((labelEl && labelEl.innerText) || '')
+              .replace(/\\s+/g, ' ').trim();
+            return {
+              autom: el.getAttribute('data-autom') || '',
+              value: el.value || '',
+              checked: !!el.checked,
+              disabled: !!el.disabled,
+              label: label.slice(0, 120),
+            };
+          });
+        }""",
+        dimension_name,
+    )
+
+
+def _select_dimension_by_prefs(
+    page,
+    dimension_name: str,
+    prefs: list[str],
+    *,
+    timer: StageTimer | None = None,
+    mark: str = "",
+    timeout_ms: int = 12_000,
+) -> str:
+    """
+    Pick first enabled option matching ordered prefs.
+    Returns selected autom/value. Raises if none match.
+    """
+    deadline = time.perf_counter() + timeout_ms / 1000
+    last_opts: list[dict] = []
+    while time.perf_counter() < deadline:
+        opts = _list_dimension_options(page, dimension_name)
+        last_opts = opts
+        enabled = [o for o in opts if not o.get("disabled")]
+        if not enabled:
+            page.wait_for_timeout(120)
+            continue
+        for o in enabled:
+            if o.get("checked") and any(_pref_matches(o, p) for p in prefs):
+                picked = o.get("autom") or o.get("value") or "?"
+                log(f"Dimension {dimension_name} already selected: {picked}")
+                if timer and mark:
+                    timer.mark(mark)
+                return str(picked)
+        chosen = None
+        for pref in prefs:
+            for o in enabled:
+                if _pref_matches(o, pref):
+                    chosen = o
+                    break
+            if chosen:
+                break
+        if not chosen:
+            chosen = enabled[0]
+            log(
+                f"WARNING: no pref matched for {dimension_name}; "
+                f"failover → {chosen.get('autom') or chosen.get('value')}"
+            )
+        autom = chosen.get("autom") or ""
+        sel = (
+            f'[data-autom="{autom}"]'
+            if autom
+            else f'input[name="{dimension_name}"][value="{chosen.get("value")}"]'
+        )
+        hint = (chosen.get("label") or "").split(" Chú thích")[0].strip()
+        _select_radio_until_checked(
+            page,
+            sel,
+            label=f"{dimension_name}:{autom or chosen.get('value')}",
+            text_hints=[hint] if hint else None,
+            timeout_ms=5_000,
+            attempts=4,
+        )
+        picked = autom or chosen.get("value") or "?"
+        log(f"Selected {dimension_name}: {picked} ({(chosen.get('label') or '')[:40]})")
+        if timer and mark:
+            timer.mark(mark)
+        return str(picked)
+    raise RuntimeError(
+        f"Dimension {dimension_name} never became selectable; last={last_opts!r}"
+    )
+
+
+def wait_family_configure_ready(
+    page,
+    family_urls: list[str],
+    *,
+    timer: StageTimer | None = None,
+    poll_ms: int = 400,
+    timeout_sec: int = 180,
+) -> str:
+    """
+    Poll family buy URL(s) until dimension radios unlock (launch / configure ready).
+    Returns the URL that became ready.
+    """
+    urls = [u for u in family_urls if u]
+    if not urls:
+        raise RuntimeError("No family_url candidates to poll")
+    deadline = time.perf_counter() + timeout_sec
+    log(f"Polling configure unlock ({len(urls)} URL(s), up to {timeout_sec}s)…")
+    idx = 0
+    while time.perf_counter() < deadline:
+        url = urls[idx % len(urls)]
+        idx += 1
+        try:
+            if urlparse(page.url).path.rstrip("/") != urlparse(url).path.rstrip("/"):
+                goto_resilient(page, url)
+            else:
+                page.reload(wait_until="domcontentloaded", timeout=30_000)
+        except Exception as exc:  # noqa: BLE001
+            log(f"Poll nav issue: {exc}")
+            page.wait_for_timeout(poll_ms)
+            continue
+        if _is_apple_404(page):
+            page.wait_for_timeout(poll_ms)
+            continue
+        ready = page.evaluate(
+            """() => {
+              const dims = Array.from(
+                document.querySelectorAll(
+                  'input[type="radio"][name="dimensionColor"],'
+                  + 'input[type="radio"][name="dimensionScreensize"],'
+                  + 'input[type="radio"][name="dimensionCapacity"]'
+                )
+              );
+              if (!dims.length) return false;
+              return dims.some((el) => !el.disabled);
+            }"""
+        )
+        if ready:
+            log(f"Configure unlocked: {page.url}")
+            if timer:
+                timer.mark("0a configure unlocked")
+            notify_macos("Assist — configure unlocked", page.url[:80])
+            return page.url
+        page.wait_for_timeout(poll_ms)
+    raise RuntimeError(f"Configure did not unlock within {timeout_sec}s (tried {urls})")
+
+
+def select_product_dimensions(
+    page,
+    prefs: dict,
+    *,
+    timer: StageTimer | None = None,
+) -> None:
+    """
+    Family-page SKU pick (order Apple uses):
+      Screensize (Pro) → Color → Capacity
+    Then trade-in becomes enabled for the existing decline path.
+    """
+    screensizes = [str(x) for x in (prefs.get("screensizes") or prefs.get("sizes") or [])]
+    colors = [str(x) for x in (prefs.get("colors") or [])]
+    storages = [str(x) for x in (prefs.get("storages") or prefs.get("capacities") or [])]
+    if not colors and not storages and not screensizes:
+        raise RuntimeError("product_prefs needs colors and/or storages (and sizes for Pro)")
+
+    size_opts = _list_dimension_options(page, "dimensionScreensize")
+    if size_opts:
+        _select_dimension_by_prefs(
+            page,
+            "dimensionScreensize",
+            screensizes or ["6.3", "6,3", "6_3"],
+            timer=timer,
+            mark="0d screensize",
+        )
+        page.wait_for_function(
+            """() => {
+              const els = document.querySelectorAll('input[name="dimensionColor"]');
+              return Array.from(els).some((el) => !el.disabled);
+            }""",
+            timeout=10_000,
+        )
+
+    if colors or _list_dimension_options(page, "dimensionColor"):
+        _select_dimension_by_prefs(
+            page,
+            "dimensionColor",
+            colors or ["black", "Đen"],
+            timer=timer,
+            mark="0e color",
+        )
+        page.wait_for_function(
+            """() => {
+              const els = document.querySelectorAll('input[name="dimensionCapacity"]');
+              return Array.from(els).some((el) => !el.disabled);
+            }""",
+            timeout=10_000,
+        )
+
+    if storages or _list_dimension_options(page, "dimensionCapacity"):
+        _select_dimension_by_prefs(
+            page,
+            "dimensionCapacity",
+            storages or ["256gb", "256"],
+            timer=timer,
+            mark="0f capacity",
+        )
+
+    page.wait_for_function(
+        """() => {
+          const t = document.querySelector(
+            '[data-autom="choose-noTradeIn"], #noTradeIn, input[value="noTradeIn"]'
+          );
+          return !!(t && !t.disabled);
+        }""",
+        timeout=12_000,
+    )
+    log(f"Dimensions done — trade-in ready at {page.url}")
+    if timer:
+        timer.mark("0g dimensions complete (trade-in ready)")
 
 
 def open_product_page(page, product_url: str) -> None:
@@ -1927,6 +2190,29 @@ def main(argv: list[str] | None = None) -> int:
         )
         label = cfg.get("label") or "Apple VN product"
         no_trade, no_care = click_labels(cfg)
+        family_url_raw = (cfg.get("family_url") or "").strip()
+        family_url = (
+            validate_store_url(family_url_raw, "family_url") if family_url_raw else ""
+        )
+        family_urls_cfg = cfg.get("family_urls") or []
+        if not isinstance(family_urls_cfg, list):
+            family_urls_cfg = []
+        family_candidates = []
+        if family_url:
+            family_candidates.append(family_url)
+        for u in family_urls_cfg:
+            if isinstance(u, str) and u.strip():
+                family_candidates.append(validate_store_url(u.strip(), "family_urls"))
+        product_prefs = cfg.get("product_prefs") if isinstance(cfg.get("product_prefs"), dict) else {}
+        use_dynamic = bool(product_prefs) or bool(family_candidates)
+        unlock_timeout = args.unlock_timeout_sec or int(cfg.get("unlock_timeout_sec") or 180)
+        # Warm should use a known-live practice SKU (not the launch family page)
+        warm_url_raw = (cfg.get("warm_product_url") or "").strip()
+        warm_product_url = (
+            validate_store_url(warm_url_raw, "warm_product_url")
+            if warm_url_raw
+            else product_url
+        )
     except ConfigError as exc:
         die(str(exc))
 
@@ -1934,6 +2220,11 @@ def main(argv: list[str] | None = None) -> int:
     log("DRY-RUN assist — declines only; never purchases")
     log(f"Persistent profile: {PROFILE_DIR}")
     log("Warm Chrome via CDP — we DISCONNECT only, never quit Chrome (keeps SSO / skips 2FA).")
+    if use_dynamic:
+        log(
+            f"Dynamic SKU mode ON — family={family_candidates or [_product_family_url(product_url)]} "
+            f"prefs={ {k: product_prefs.get(k) for k in ('screensizes','sizes','colors','storages') if product_prefs.get(k)} }"
+        )
 
     sync_playwright = _require_playwright()
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1986,7 +2277,7 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     warm_checkout_sso(
                         page,
-                        product_url=product_url,
+                        product_url=warm_product_url,
                         no_trade=no_trade,
                         no_care=no_care,
                         login_timeout_sec=args.login_timeout_sec,
@@ -2013,17 +2304,34 @@ def main(argv: list[str] | None = None) -> int:
                         "(pre-warm earlier: python assist.py --warm-only)"
                     )
 
-                log(f"Opening product (timed run): {product_url}")
                 timer = StageTimer()
-                open_product_page(page, product_url)
-                timer.mark("0 product page navigation")
-
-                if looks_like_signin(page.url, page.title()):
-                    log("Product flow redirected to sign-in — waiting (2FA if needed)…")
-                    if not wait_for_signin(page, args.login_timeout_sec):
-                        raise RuntimeError("Sign-in required again; finish 2FA then re-run assist.py")
+                if use_dynamic:
+                    candidates = family_candidates or [_product_family_url(product_url)]
+                    log(f"Dynamic timed run — poll/select on {candidates}")
+                    wait_family_configure_ready(
+                        page,
+                        candidates,
+                        timer=timer,
+                        timeout_sec=unlock_timeout,
+                    )
+                    select_product_dimensions(
+                        page,
+                        product_prefs or {},
+                        timer=timer,
+                    )
+                else:
+                    log(f"Opening product (timed run): {product_url}")
                     open_product_page(page, product_url)
-                    timer.mark("0b re-login + product reload")
+                    timer.mark("0 product page navigation")
+
+                    if looks_like_signin(page.url, page.title()):
+                        log("Product flow redirected to sign-in — waiting (2FA if needed)…")
+                        if not wait_for_signin(page, args.login_timeout_sec):
+                            raise RuntimeError(
+                                "Sign-in required again; finish 2FA then re-run assist.py"
+                            )
+                        open_product_page(page, product_url)
+                        timer.mark("0b re-login + product reload")
 
                 page.locator(
                     '#noTradeIn, [data-autom="choose-noTradeIn"], input[value="noTradeIn"]'

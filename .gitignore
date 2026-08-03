@@ -4,7 +4,9 @@ __pycache__/
 .venv/
 venv/
 .browser-profile/
+.browser-profile-dynamic/
 .DS_Store
 *.log
 .env
 probe-report.json
+dimension-probe.json

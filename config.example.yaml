@@ -4,38 +4,43 @@
 # HARD RULE: this kit never places an order. dry_run must stay true.
 dry_run: true
 
-# Display label only (for logs / notifications)
-# Practice target: iPhone 17. Swap URL/label for iPhone 18 at launch.
-label: "iPhone 17 256GB Đen (practice for iPhone 18 launch)"
+label: "iPhone 17 256GB Đen (dynamic SKU practice)"
 
-# Exact configured product URL — skips model/color/storage ONLY.
-# Trade-in + AppleCare still appear on this page (see manual_clicks / assist.py).
-# At iPhone 18 launch: replace with the fully configured apple.com/vn buy URL.
+# ---------------------------------------------------------------------------
+# DYNAMIC SKU (recommended for launch)
+# Timed run opens family_url, polls until configure unlocks, then picks
+# screensize (Pro) → color → capacity from product_prefs (ordered fallbacks).
+# ---------------------------------------------------------------------------
+family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17"
+# Optional extras to poll if the primary 404s at T-0:
+# family_urls:
+#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-17-pro"
+unlock_timeout_sec: 180
+
+product_prefs:
+  # Pro pages only (ignored on plain iPhone 17 / Air)
+  screensizes: ["6,3", "6.3", "6_3"]
+  colors: ["Đen", "black"]
+  storages: ["256GB", "256gb", "256"]
+
+# Known-live deep link — used for --warm-only SSO fuel + fallback if you
+# disable product_prefs. Keep an iPhone 17 configured URL for warm.
+warm_product_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17/m%C3%A0n-h%C3%ACnh-6,3-inch-256gb-%C4%91en"
 product_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17/m%C3%A0n-h%C3%ACnh-6,3-inch-256gb-%C4%91en"
 
-# Warm/session URLs — account page is the real signed-in check (homepage is not).
 warm_url: "https://www.apple.com/vn/shop/goto/account"
 session_url: "https://www.apple.com/vn/shop/goto/account"
 
-# Launch instant in Asia/Ho_Chi_Minh (Vietnam).
-# For a fake dry-run, prefer: python launch.py --in 2m
-launch_at: "2026-09-19T08:00:00"
+launch_at: "2026-09-19T19:00:00"
 timezone: "Asia/Ho_Chi_Minh"
-
-# Minutes before launch_at to open warm_url
 warm_minutes_before: 10
 
-# Browser used by `open -a` for launch.py / watch.py.
-# MUST be the browser where you are signed into Apple ID.
-# If you use Chrome daily, set: "Google Chrome"
-browser: "Safari"
+browser: "Google Chrome"
 
-# Exact Vietnamese labels to click after the deep link opens
 manual_clicks:
   no_trade_in: "Không đổi cũ lấy mới"
   no_applecare: "Không có bảo hành AppleCare+"
 
-# Checkout (assist stops at payment — never clicks Đặt hàng)
 checkout:
   location_city: "Thành phố Hồ Chí Minh"
   location_district: "Quận Bình Thạnh"
@@ -47,13 +52,12 @@ checkout:
     street2: ""
     state: "Thành phố Hồ Chí Minh"
     city: "Quận Bình Thạnh"
-    district: "Phường 11"   # phường trước sáp nhập
+    district: "Phường 11"
     postal_code: ""
   contact:
     email: "you@example.com"
     phone: "0900000000"
 
-# Optional light watcher (python watch.py)
 watcher:
   enabled: true
   poll_seconds: 20

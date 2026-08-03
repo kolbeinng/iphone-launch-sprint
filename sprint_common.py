@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import socket
 import subprocess
 import sys
@@ -18,9 +19,14 @@ ROOT = Path(__file__).resolve().parent
 DEFAULT_CONFIG = ROOT / "config.yaml"
 EXAMPLE_CONFIG = ROOT / "config.example.yaml"
 # Dedicated profile for assist/probe (NOT your everyday Chrome profile).
-ASSIST_PROFILE_DIR = ROOT / ".browser-profile"
+# Override for parallel worktrees: ASSIST_PROFILE_DIR / ASSIST_CDP_PORT env vars.
+_profile_env = (os.environ.get("ASSIST_PROFILE_DIR") or "").strip()
+ASSIST_PROFILE_DIR = (
+    Path(_profile_env) if _profile_env else ROOT / ".browser-profile-dynamic"
+)
 # Warm Chrome stays alive across runs — connect via CDP, never quit the app.
-ASSIST_CDP_PORT = 9222
+# Default 9223 so this worktree does not collide with practice kit on :9222.
+ASSIST_CDP_PORT = int(os.environ.get("ASSIST_CDP_PORT") or "9223")
 ASSIST_CDP_URL = f"http://127.0.0.1:{ASSIST_CDP_PORT}"
 CHROME_MAC = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 
