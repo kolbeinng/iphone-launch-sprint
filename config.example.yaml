@@ -1,41 +1,78 @@
-# Copy to config.yaml and edit:
+# Copy to config.yaml on each computer, then fill ONLY cvv:
 #   cp config.example.yaml config.yaml
+# This file is what GitHub has. config.yaml stays on the machine (gitignored).
+
+dry_run: true   # keep true. Script never clicks Đặt hàng.
+
+# =============================================================================
+# PHONE PICKER — uncomment EXACTLY ONE block below
+# =============================================================================
 #
-# PRACTICE vs LAUNCH (iPhone 18): see comments in config.yaml.
-# Launch night flip is mainly: family_match: ["18", "Pro"]
-# Keep dry_run: true, keep warm_product_url on a LIVE iPhone 17 SKU.
-
-dry_run: true
-
-label: "iPhone 17 256GB Đen (practice) — swap label at launch"
-
+# TODAY  = TEST (iPhone 17 Pro Max) is ON. LAUNCH is all comments.
+#
+# LAUNCH NIGHT — do this, in order:
+#   1) Comment out EVERY line in "TEST — iPhone 17"  (put # in front)
+#   2) Uncomment EVERY line in "LAUNCH — iPhone 18" (delete the # and the space)
+#   3) Confirm launch_at below when Apple announces VN time
 # =============================================================================
-# FAMILY URL — timed run polls until configure unlocks
-# =============================================================================
-# Guessed family URL(s) — soft-404 ("Không Tìm Thấy Trang") is skipped quickly
+
+
+# -----------------------------------------------------------------------------
+# TEST — iPhone 17 Pro Max  (LIVE now — for dry-runs)
+# -----------------------------------------------------------------------------
+target:
+  year: 17
+  model: pro-max
+label: "TEST iPhone 17 Pro Max 256GB Cam Vũ Trụ"
 family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17-pro"
-# family_urls:
-#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro"
-#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-18"
-family_hub_url: "https://www.apple.com/vn/shop/buy-iphone/"
-# Hub auto-pick: card text/href must contain ALL tokens. Else you click the tile.
-family_match: ["17", "Pro"]
-family_user_pick_timeout_sec: 45
-# Phase A budget only (seconds). Then hub scrape → optional user click.
-unlock_timeout_sec: 20
-
+family_urls:
+  - "https://www.apple.com/vn/shop/buy-iphone/iphone-17-pro"
+family_match: ["17", "Pro Max"]
 product_prefs:
-  # Pro pages only: 6.3 = Pro, 6.9 = Pro Max (rumor: same for 18)
-  screensizes: ["6,3", "6.3", "6_3inch", "6_3"]
-  # colors: substring OR regex (re:cam|orange  /  /cam.*trụ/i)
-  # No match → wait_user (you click in Chrome; continues ~50ms) | stop | failover
-  colors: ["Đen", "black"]
-  storages: ["256GB", "256gb", "256"]
+  screensizes: ["6,9", "6.9", "6_9inch", "6_9"]
+  colors:
+    - "Cam Vũ Trụ"
+    - "cosmicorange"
+    - "re:cam|orange|cosmic"
   on_miss: wait_user
   user_pick_timeout_sec: 20
   allow_failover: false
+  storages: ["256GB", "256gb", "256", "re:256"]
 
-# WORKING warm deep link (iPhone 17 6.3" 256GB Đen) — keep for --warm-only SSO
+
+# -----------------------------------------------------------------------------
+# LAUNCH — iPhone 18 Pro Max  (commented until launch night)
+# Fold is NOT listed — not expected on apple.com/vn.
+# -----------------------------------------------------------------------------
+# target:
+#   year: 18
+#   model: pro-max
+# label: "iPhone 18 Pro Max 256GB Cam Vũ Trụ"
+# family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro"
+# family_urls:
+#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro"
+#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro-max"
+# family_match: ["18", "Pro Max"]
+# product_prefs:
+#   screensizes: ["6,9", "6.9", "6_9inch", "6_9"]
+#   colors:
+#     - "Cam Vũ Trụ"
+#     - "cosmicorange"
+#     - "re:cam|orange|cosmic"
+#   on_miss: wait_user
+#   user_pick_timeout_sec: 20
+#   allow_failover: false
+#   storages: ["256GB", "256gb", "256", "re:256"]
+
+
+# =============================================================================
+# SHARED — same for TEST and LAUNCH
+# =============================================================================
+family_hub_url: "https://www.apple.com/vn/shop/buy-iphone/"
+family_user_pick_timeout_sec: 45
+unlock_timeout_sec: 12
+
+# SSO fuel only — MUST stay a LIVE iPhone 17 link even on launch night.
 warm_product_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17/m%C3%A0n-h%C3%ACnh-6,3-inch-256gb-%C4%91en"
 product_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17/m%C3%A0n-h%C3%ACnh-6,3-inch-256gb-%C4%91en"
 
@@ -52,40 +89,29 @@ manual_clicks:
   no_applecare: "Không có bảo hành AppleCare+"
 
 checkout:
+  # How many of this iPhone to take to checkout. Bag default is 1.
+  # Script sets this on the bag page before Thanh Toán. Apple often caps iPhone at 2.
+  quantity: 1
   location_city: "Thành phố Hồ Chí Minh"
   location_district: "Quận Bình Thạnh"
-  # false = select matching saved shipping address (visible name + street).
-  # Falls back to Sử dụng địa chỉ mới if none match. true = always fill new.
   use_new_address: false
-  # Per-card / per-machine. Name, street, email, phone, product can be copied; CVV cannot.
   cvv: ""
-  # OFF: fix card billing in Apple Account before running (recommended).
-  # ON + billing_address below = slow ~40s Chỉnh Sửa Địa Chỉ popup safety net.
   sync_billing_address: false
   force_sync_billing_address: false
-  # Delivery destination
+
   shipping_address:
-    first_name: "Your"
-    last_name: "Name"
-    street: "Street address"
+    first_name: "Võ Văn"
+    last_name: "Quân"
+    street: "354/89/13 phan văn trị phường 11 tphcm"
     street2: ""
     state: "Thành phố Hồ Chí Minh"
     city: "Quận Bình Thạnh"
     district: "Phường 11"
     postal_code: ""
-  # Optional card-billing override (keep commented unless sync_billing_address: true)
-  # billing_address:
-  #   first_name: "Your"
-  #   last_name: "Name"
-  #   street: "Street address"
-  #   street2: ""
-  #   state: "Thành phố Hồ Chí Minh"
-  #   city: "Quận 7"
-  #   district: "Phường Tân Hưng"
-  #   postal_code: ""
+
   contact:
-    email: "you@example.com"
-    phone: "0900000000"
+    email: "Quanvo1992@gmail.com"
+    phone: "0969515515"
 
 watcher:
   enabled: true

@@ -2,6 +2,22 @@
 
 Scripts never enter your Apple password and never click **Đặt hàng**.
 
+## What this orders
+
+**TEST (on now in config.yaml):** iPhone 17 Pro Max · 6.9" · 256GB · Cam Vũ Trụ — dry-runs.
+
+**LAUNCH (commented out):** iPhone 18 Pro Max. Fold is not listed.
+
+Switch in `config.yaml` only — no code changes:
+
+1. Comment out the whole **TEST — iPhone 17** block
+2. Uncomment the whole **LAUNCH — iPhone 18** block
+3. Confirm `launch_at`
+
+`--warm-only` always uses a live iPhone 17 link to stay signed in, then **empties the bag**. That is not the order.
+
+When LAUNCH is on, the script **refuses** to bag 17 / Fold / Air.
+
 ---
 
 ## This Mac vs GitHub (read this once)
@@ -95,9 +111,9 @@ Same Apple ID on a new computer: after login, the saved address usually appears 
 - **T−0:** `python assist.py --at-launch` (sleeps until `launch_at`). Do not add extra seconds after 19:00.
 - **You** click Đặt hàng.
 
-`--now` = practice. `--at-launch` = real timer. Don’t mix them on the night. Don’t quit Chrome between warm and sprint.
+`--now` = same product path as launch, no clock. `--at-launch` = waits until `launch_at`. Don’t quit Chrome between warm and sprint.
 
-iPhone 18 flip is in `config.yaml` comments. Main one: `family_match: ["18", "Pro"]`. Keep `warm_product_url` on a **live iPhone 17** link. Keep `dry_run: true`.
+Keep `warm_product_url` on a **live iPhone 17** link. Keep `dry_run: true`. Confirm `launch_at` when Apple announces the VN time.
 
 ---
 
@@ -116,7 +132,7 @@ We only open the city/quận editor if the label is **not** already HCM (wrong c
 
 ## Night-before extras
 
-- [ ] `config.yaml`: product prefs / `family_match` ready for launch (not leftover practice `["17", "Pro"]`)
+- [ ] Phone picker: **LAUNCH** uncommented, **TEST** commented (`target.year: 18`)
 - [ ] `checkout.cvv` is the card on **this** machine
 - [ ] `dry_run: true` until you are ready to click Đặt hàng yourself
 - [ ] Alarm `Asia/Ho_Chi_Minh`; notifications on; Focus / DND off

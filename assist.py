@@ -731,15 +731,22 @@ def _select_dimension_by_prefs(
             continue
         for o in enabled:
             if o.get("checked") and any(_pref_matches(o, p) for p in prefs):
-                picked = o.get("autom") or o.get("value") or "?"
-                wall_ms = (time.perf_counter() - t0) * 1000
+                if _bfe_dimension_committed(page, dimension_name):
+                    picked = o.get("autom") or o.get("value") or "?"
+                    wall_ms = (time.perf_counter() - t0) * 1000
+                    log(
+                        f"Dimension {dimension_name} already selected: {picked} "
+                        f"({wall_ms:.0f}ms) — BFE committed, skip click"
+                    )
+                    if timer and mark:
+                        timer.record(mark, wall_ms, kind="click")
+                    return str(picked)
                 log(
-                    f"Dimension {dimension_name} already selected: {picked} "
-                    f"({wall_ms:.0f}ms)"
+                    f"Dimension {dimension_name} looks checked "
+                    f"({o.get('autom')}) but Apple has not committed it — "
+                    "one pointer click"
                 )
-                if timer and mark:
-                    timer.record(mark, wall_ms, kind="click")
-                return str(picked)
+                break
         chosen = None
         matched_pref = None
         user_picked = False
@@ -806,16 +813,11 @@ def _select_dimension_by_prefs(
             if autom
             else f'input[name="{dimension_name}"][value="{chosen.get("value")}"]'
         )
-        hint = (chosen.get("label") or "").split(" Chú thích")[0].strip()
         wait_opts_ms = (time.perf_counter() - t0) * 1000
-        sel_ms = _select_radio_until_checked(
-            page,
-            sel,
-            label=f"{dimension_name}:{autom or chosen.get('value')}",
-            text_hints=[hint] if hint else None,
-            timeout_ms=5_000,
-            attempts=4,
-        )
+        sel_ms = _click_dimension_tile(page, sel)
+        if not _radio_is_checked(page, sel):
+            log(f"WARN  pointer click missed {sel} — retry once")
+            sel_ms = _click_dimension_tile(page, sel)
         wall_ms = (time.perf_counter() - t0) * 1000
         picked = autom or chosen.get("value") or "?"
         log(
@@ -885,13 +887,118 @@ def _list_hub_buy_links(page) -> list[dict]:
         return []
 
 
+def _norm_match_hay(value: str) -> str:
+    s = (value or "").lower()
+    s = re.sub(r"[-_/]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
 def _hub_link_matches(link: dict, family_match: list[str]) -> bool:
     """All match tokens must appear in href or text (case-insensitive)."""
     tokens = [str(t).strip().lower() for t in family_match if str(t).strip()]
     if not tokens:
         return False
-    hay = f"{link.get('href') or ''} {link.get('text') or ''}".lower()
-    return all(tok in hay for tok in tokens)
+    hay = _norm_match_hay(f"{link.get('href') or ''} {link.get('text') or ''}")
+    return all(_norm_match_hay(tok) in hay for tok in tokens)
+
+
+def _hub_link_forbidden_reason(link: dict, *, year: str) -> str | None:
+    """Drop leftover 17 / Fold / Air cards when the order target is iPhone 18."""
+    hay = _norm_match_hay(f"{link.get('href') or ''} {link.get('text') or ''}")
+    href = (link.get("href") or "").lower()
+    if str(year) != "18":
+        return None
+    if "iphone 17" in hay or "iphone-17" in href:
+        return "iPhone 17"
+    if "iphone 16" in hay or "iphone-16" in href:
+        return "iPhone 16"
+    if "fold" in hay:
+        return "Fold"
+    if re.search(r"iphone[- ]?air\b", hay):
+        return "Air"
+    return None
+
+
+def load_order_target(cfg: dict) -> dict:
+    raw = cfg.get("target") if isinstance(cfg.get("target"), dict) else {}
+    year = str(raw.get("year") or "18").strip()
+    model = str(raw.get("model") or "pro-max").strip().lower().replace(" ", "-")
+    if model in ("promax", "pro_max"):
+        model = "pro-max"
+    return {"year": year, "model": model}
+
+
+def _buy_page_snapshot(page) -> dict:
+    try:
+        snap = page.evaluate(
+            """() => {
+              const h1 = ((document.querySelector('h1') || {}).innerText || '')
+                .replace(/\\s+/g, ' ').trim();
+              return {
+                url: location.href || '',
+                h1,
+                title: (document.title || '').replace(/\\s+/g, ' ').trim(),
+              };
+            }"""
+        )
+    except Exception:  # noqa: BLE001
+        snap = {}
+    return snap if isinstance(snap, dict) else {}
+
+
+def assert_family_is_order_target(page, target: dict) -> None:
+    """Hard stop before trade-in if this is 17 / Fold / Air / wrong year."""
+    year = str(target.get("year") or "18")
+    snap = _buy_page_snapshot(page)
+    url = (snap.get("url") or page.url or "").lower()
+    h1 = str(snap.get("h1") or "")
+    title = str(snap.get("title") or "")
+    blob = _norm_match_hay(f"{url} {h1} {title}")
+    log(f"TARGET CHECK family: year={year} url={page.url} h1={h1[:80]!r}")
+
+    if f"iphone {year}" not in blob and f"iphone-{year}" not in url:
+        raise RuntimeError(
+            f"REFUSE: not iPhone {year} (url={page.url}, h1={h1[:80]!r}). "
+            "Will not add to bag — this prevents ordering iPhone 17."
+        )
+    if year == "18":
+        if "iphone-17" in url or "iphone 17" in blob:
+            raise RuntimeError(
+                "REFUSE: iPhone 17 configure page. Target is iPhone 18 Pro Max. "
+                "Will not add to bag."
+            )
+        if "fold" in url or re.search(r"\bfold\b", blob):
+            raise RuntimeError(
+                "REFUSE: Fold page. Fold is not the VN order target."
+            )
+        if re.search(r"iphone[- ]?air\b", url) or re.search(r"iphone air\b", blob):
+            raise RuntimeError("REFUSE: iPhone Air page. Target is 18 Pro Max.")
+
+
+def assert_sku_is_pro_max(page, target: dict) -> None:
+    """After size/color/storage: 6.9 / Pro Max must be the checked screensize."""
+    if str(target.get("model") or "pro-max") != "pro-max":
+        return
+    sizes = _list_dimension_options(page, "dimensionScreensize")
+    if not sizes:
+        raise RuntimeError(
+            "REFUSE: no screensize radios — not a Pro/Pro Max family page. "
+            "Will not add to bag."
+        )
+    checked = next((s for s in sizes if s.get("checked")), None)
+    if not checked:
+        raise RuntimeError("REFUSE: no screensize selected. Will not add to bag.")
+    hay = _norm_match_hay(
+        f"{checked.get('autom') or ''} {checked.get('label') or ''} "
+        f"{checked.get('value') or ''}"
+    )
+    ok = any(tok in hay for tok in ("6 9", "6,9", "6.9", "pro max"))
+    log(f"TARGET CHECK sku: selected screensize={checked!r} ok={ok}")
+    if not ok:
+        raise RuntimeError(
+            f"REFUSE: screensize is not Pro Max 6.9 (got {checked.get('label')!r} "
+            f"/ {checked.get('autom')!r}). Will not add to bag."
+        )
 
 
 def _wait_user_family_page(
@@ -905,13 +1012,14 @@ def _wait_user_family_page(
     Continues as soon as configure radios unlock (soft-404 ignored).
     """
     log(
-        f"USER PICK  open/click the iPhone family page in Chrome NOW "
+        f"USER PICK  click iPhone 18 Pro Max on the hub NOW "
+        f"(NOT 17, NOT Fold, NOT Air) "
         f"(poll={poll_ms}ms, timeout={timeout_sec:.0f}s)"
     )
     beep()
     notify_macos(
-        "Assist — pick iPhone page",
-        "Guessed URLs failed. Click the right iPhone on the hub (or open its buy URL).",
+        "Assist — pick iPhone 18 Pro Max",
+        "Click iPhone 18 Pro / Pro Max on the hub. Do NOT click 17 or Fold.",
     )
     t0 = time.perf_counter()
     deadline = t0 + max(5.0, timeout_sec)
@@ -946,6 +1054,7 @@ def wait_family_configure_ready(
     hub_url: str = "https://www.apple.com/vn/shop/buy-iphone/",
     family_match: list[str] | None = None,
     user_pick_timeout_sec: float = 45.0,
+    target: dict | None = None,
 ) -> str:
     """
     Resolve a live configure page:
@@ -1035,7 +1144,19 @@ def wait_family_configure_ready(
                 else "(none)"
             )
         )
+        year = str((target or {}).get("year") or "18")
         matched = [x for x in links if _hub_link_matches(x, match_tokens)]
+        dropped = []
+        kept = []
+        for x in matched:
+            why = _hub_link_forbidden_reason(x, year=year)
+            if why:
+                dropped.append(f"{x.get('text')!r} ({why})")
+            else:
+                kept.append(x)
+        if dropped:
+            log("FAMILY B  dropped forbidden cards: " + ", ".join(dropped[:8]))
+        matched = kept
         if match_tokens:
             log(
                 f"FAMILY B  match tokens={match_tokens!r} → "
@@ -1082,6 +1203,233 @@ def wait_family_configure_ready(
         timer.since(t_all, "0a configure unlocked (user)", kind="poll")
     notify_macos("Assist — configure unlocked", ready_url[:80])
     return ready_url
+
+
+def _some_dimension_enabled(page, dimension_name: str) -> bool:
+    try:
+        return bool(
+            page.evaluate(
+                """(name) => Array.from(
+                  document.querySelectorAll(
+                    'input[type="radio"][name="' + name + '"]'
+                  )
+                ).some((el) => !el.disabled)""",
+                dimension_name,
+            )
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _capacity_prices_committed(page) -> bool:
+    """True when storage tiles show a concrete SKU price, not family 'Từ …'."""
+    try:
+        return bool(
+            page.evaluate(
+                """() => {
+                  const els = Array.from(
+                    document.querySelectorAll(
+                      'input[type="radio"][name="dimensionCapacity"]'
+                    )
+                  );
+                  if (!els.some((el) => !el.disabled)) return false;
+                  return els.filter((el) => !el.disabled).every((el) => {
+                    const lab = el.id
+                      ? document.querySelector('label[for="' + el.id + '"]')
+                      : null;
+                    const t = ((lab && lab.innerText) || '').replace(/\\s+/g, ' ');
+                    return /\\d[\\d.]*\\s*đ/.test(t) && !/Từ\\s*[\\d.]/.test(t);
+                  });
+                }"""
+            )
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _trade_in_enabled(page) -> bool:
+    try:
+        return bool(
+            page.evaluate(
+                """() => {
+                  const t = document.querySelector(
+                    '[data-autom="choose-noTradeIn"], #noTradeIn, input[value="noTradeIn"]'
+                  );
+                  return !!(t && !t.disabled);
+                }"""
+            )
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _bfe_dimension_committed(page, dimension_name: str) -> bool:
+    """DOM `checked` is not enough — Apple's buy-flow has a later commit."""
+    if dimension_name == "dimensionScreensize":
+        return _some_dimension_enabled(page, "dimensionColor")
+    if dimension_name == "dimensionColor":
+        return _capacity_prices_committed(page)
+    if dimension_name == "dimensionCapacity":
+        return _trade_in_enabled(page)
+    return False
+
+
+def _wait_dimension_enabled_stable(
+    page, dimension_name: str, *, settle_ms: int = 200, timeout_ms: int = 10_000
+) -> float:
+    """Wait until radios are enabled AND stay enabled (cascade finished)."""
+    t0 = time.perf_counter()
+    deadline = t0 + timeout_ms / 1000
+    ok_since: float | None = None
+    while time.perf_counter() < deadline:
+        enabled = _some_dimension_enabled(page, dimension_name)
+        now = time.perf_counter()
+        if enabled:
+            if ok_since is None:
+                ok_since = now
+            elif (now - ok_since) * 1000 >= settle_ms:
+                return (now - t0) * 1000
+        else:
+            ok_since = None
+        page.wait_for_timeout(40)
+    raise TimeoutError(f"{dimension_name} radios never stayed enabled")
+
+
+def _wait_capacity_cascade_ready(page, *, timeout_ms: int = 10_000) -> float:
+    """After color, wait until storage tiles show a concrete SKU price.
+
+    Clicking 256GB in the 2ms window where radios merely `!disabled` checks the
+    input; Apple's buy-flow has not bound Trade In yet, so it stays locked.
+    """
+    t0 = time.perf_counter()
+    page.wait_for_function(
+        """() => {
+          const els = Array.from(
+            document.querySelectorAll(
+              'input[type="radio"][name="dimensionCapacity"]'
+            )
+          );
+          if (!els.some((el) => !el.disabled)) return false;
+          return els.filter((el) => !el.disabled).every((el) => {
+            const lab = el.id
+              ? document.querySelector('label[for="' + el.id + '"]')
+              : null;
+            const t = ((lab && lab.innerText) || '').replace(/\\s+/g, ' ');
+            return /\\d[\\d.]*\\s*đ/.test(t) && !/Từ\\s*[\\d.]/.test(t);
+          });
+        }""",
+        timeout=timeout_ms,
+    )
+    # Give BFE a beat to bind Trade In to the next storage click.
+    page.wait_for_timeout(150)
+    return (time.perf_counter() - t0) * 1000
+
+
+def _click_dimension_tile(page, input_selector: str) -> float:
+    """One real pointer click on the SKU tile (trusted event). JS .click() is not enough."""
+    t0 = time.perf_counter()
+    loc = page.locator(input_selector).first
+    loc.wait_for(state="attached", timeout=5_000)
+    loc.scroll_into_view_if_needed(timeout=2_000)
+    input_id = loc.get_attribute("id")
+    target = (
+        page.locator(f'label[for="{input_id}"]').first if input_id else loc
+    )
+    target.click(timeout=2_000)
+    page.wait_for_function(
+        """(sel) => {
+          const el = document.querySelector(sel);
+          return !!(el && el.checked);
+        }""",
+        arg=input_selector,
+        timeout=3_000,
+    )
+    ms = (time.perf_counter() - t0) * 1000
+    log(f"CLICK  dimension tile {input_selector}: {ms:.0f}ms (Playwright pointer)")
+    return ms
+
+
+def _trade_in_debug(page) -> str:
+    try:
+        return str(
+            page.evaluate(
+                """() => {
+                  const t = document.querySelector('[data-autom="choose-noTradeIn"]');
+                  const yes = document.querySelector('[data-autom="choose-tradeIn"]');
+                  const add = document.querySelector('[data-autom="add-to-cart"]');
+                  const verify = document.querySelector(
+                    '[data-autom="tradeup-module-verify"]'
+                  );
+                  const cap = document.querySelector(
+                    'input[name="dimensionCapacity"]:checked'
+                  );
+                  const busy = !!document.querySelector(
+                    '[aria-busy="true"], .as-loader, .rf-loader'
+                  );
+                  const parent = t && t.closest(
+                    'fieldset, .rf-tradeupinline-mainwrapper, [class*="decision"]'
+                  );
+                  return [
+                    'cap=' + (cap && cap.getAttribute('data-autom')),
+                    'noTrade=' + (t ? ('dis=' + t.disabled + '/chk=' + t.checked) : 'missing'),
+                    'yesTrade=' + (yes ? ('dis=' + yes.disabled) : 'missing'),
+                    'addDis=' + (add ? add.disabled : '?'),
+                    'verify=' + (verify && verify.offsetParent ? 'visible' : 'no'),
+                    'busy=' + busy,
+                    'parent=' + (parent && String(parent.className).slice(0, 80)),
+                    'path=' + location.pathname.slice(-60),
+                  ].join(' ');
+                }"""
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return f"debug-failed {exc}"
+
+
+def _wait_trade_in_ready(page, *, timer: StageTimer | None = None) -> None:
+    """Wait for Apple to enable Trade In after the SKU click. No reload, no second 256GB click."""
+    ready_js = """() => {
+      const t = document.querySelector(
+        '[data-autom="choose-noTradeIn"], #noTradeIn, input[value="noTradeIn"]'
+      );
+      return !!(t && !t.disabled);
+    }"""
+    t0 = time.perf_counter()
+    log(f"Trade-in debug (before wait): {_trade_in_debug(page)}")
+    try:
+        _wait_js_heartbeat(
+            page,
+            ready_js,
+            label="trade-in radios enabled after SKU",
+            timeout_ms=15_000,
+            snapshot_js="""() => {
+              const t = document.querySelector('[data-autom="choose-noTradeIn"]');
+              const cap = document.querySelector(
+                'input[name="dimensionCapacity"]:checked'
+              );
+              const add = document.querySelector('[data-autom="add-to-cart"]');
+              const ds = document.querySelector(
+                '[class*="decisionsection"], [data-autom="tradein_decisionsection"]'
+              );
+              return [
+                t ? ('dis=' + t.disabled) : 'missing',
+                'cap=' + (cap && cap.getAttribute('data-autom')),
+                'addDis=' + (add ? add.disabled : '?'),
+                'ds=' + (ds && String(ds.className).slice(0, 50)),
+              ].join(' ');
+            }""",
+        )
+    except TimeoutError:
+        dbg = _trade_in_debug(page)
+        log(f"Trade-in STUCK disabled: {dbg}")
+        raise TimeoutError(
+            "Trade In radios stayed disabled after 256GB. "
+            f"{dbg}"
+        ) from None
+    wait_ms = (time.perf_counter() - t0) * 1000
+    log(f"WAIT  trade-in ready after dimensions: {wait_ms:.0f}ms — {page.url}")
+    if timer:
+        timer.record("0g dimensions complete (trade-in ready)", wait_ms, kind="wait")
 
 
 def select_product_dimensions(
@@ -1136,14 +1484,7 @@ def select_product_dimensions(
             f"{(time.perf_counter() - t_size) * 1000:.0f}ms"
         )
         t_wait = time.perf_counter()
-        page.wait_for_function(
-            """() => {
-              const els = document.querySelectorAll('input[name="dimensionColor"]');
-              return Array.from(els).some((el) => !el.disabled);
-            }""",
-            timeout=10_000,
-        )
-        wait_ms = (time.perf_counter() - t_wait) * 1000
+        wait_ms = _wait_dimension_enabled_stable(page, "dimensionColor")
         log(f"WAIT  color options after screensize: {wait_ms:.0f}ms")
         if timer:
             timer.record("0d2 wait color unlock", wait_ms, kind="wait")
@@ -1162,17 +1503,10 @@ def select_product_dimensions(
             f"{(time.perf_counter() - t_color) * 1000:.0f}ms"
         )
         t_wait = time.perf_counter()
-        page.wait_for_function(
-            """() => {
-              const els = document.querySelectorAll('input[name="dimensionCapacity"]');
-              return Array.from(els).some((el) => !el.disabled);
-            }""",
-            timeout=10_000,
-        )
-        wait_ms = (time.perf_counter() - t_wait) * 1000
-        log(f"WAIT  capacity options after color: {wait_ms:.0f}ms")
+        wait_ms = _wait_capacity_cascade_ready(page)
+        log(f"WAIT  capacity cascade after color: {wait_ms:.0f}ms")
         if timer:
-            timer.record("0e2 wait capacity unlock", wait_ms, kind="wait")
+            timer.record("0e2 wait capacity cascade", wait_ms, kind="wait")
 
     if storages or _list_dimension_options(page, "dimensionCapacity"):
         t_cap = time.perf_counter()
@@ -1187,21 +1521,28 @@ def select_product_dimensions(
             f"CLICK  capacity select wall: "
             f"{(time.perf_counter() - t_cap) * 1000:.0f}ms"
         )
+        try:
+            st = page.evaluate(
+                """() => {
+                  const t = document.querySelector('[data-autom="choose-noTradeIn"]');
+                  const cap = document.querySelector(
+                    'input[name="dimensionCapacity"]:checked'
+                  );
+                  return {
+                    url: location.href,
+                    cap: cap ? cap.getAttribute('data-autom') : null,
+                    tradeDisabled: t ? t.disabled : null,
+                  };
+                }"""
+            )
+            log(
+                f"After capacity: cap={st.get('cap')} "
+                f"tradeDisabled={st.get('tradeDisabled')} url={st.get('url','')[:100]}"
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
-    t_trade = time.perf_counter()
-    page.wait_for_function(
-        """() => {
-          const t = document.querySelector(
-            '[data-autom="choose-noTradeIn"], #noTradeIn, input[value="noTradeIn"]'
-          );
-          return !!(t && !t.disabled);
-        }""",
-        timeout=25_000,
-    )
-    wait_ms = (time.perf_counter() - t_trade) * 1000
-    log(f"WAIT  trade-in ready after dimensions: {wait_ms:.0f}ms — {page.url}")
-    if timer:
-        timer.record("0g dimensions complete (trade-in ready)", wait_ms, kind="wait")
+    _wait_trade_in_ready(page, timer=timer)
 
 
 def open_product_page(page, product_url: str) -> None:
@@ -1741,6 +2082,126 @@ def click_xem_gio_hang_now(page, timer: StageTimer | None = None) -> None:
     nav_ms = goto_resilient(page, "https://www.apple.com/vn/shop/bag")
     timer.record("7 bag page (direct)", nav_ms, kind="nav")
     log(f"At bag ({(time.perf_counter() - t0) * 1000:.0f}ms): {page.url}")
+
+
+def _bag_quantity_select_info(page) -> dict:
+    """Find the bag line-item quantity <select> (Apple VN: Số lượng)."""
+    try:
+        info = page.evaluate(
+            """() => {
+              const selects = Array.from(document.querySelectorAll('select'));
+              const scored = selects.map((el) => {
+                const autom = el.getAttribute('data-autom') || '';
+                const name = el.name || '';
+                const id = el.id || '';
+                const aria = el.getAttribute('aria-label') || '';
+                const lab = (el.labels && el.labels[0]
+                  ? el.labels[0].innerText : '') || '';
+                const near = ((el.closest('.rs-item-quantity, .rs-bag-item, li, div')
+                  || el.parentElement || {}).innerText || '').slice(0, 120);
+                const hay = (autom + ' ' + name + ' ' + id + ' ' + aria
+                  + ' ' + lab + ' ' + near).toLowerCase();
+                const opts = Array.from(el.options).map((o) => String(o.value));
+                const numeric = opts.length > 0 && opts.every((v) => /^\\d+$/.test(v));
+                let score = 0;
+                if (/quant|qty|số lượng|so luong/.test(hay)) score += 10;
+                if (/item-quantity|bag-item-quantity|quantity-dropdown/.test(autom)) {
+                  score += 8;
+                }
+                if (numeric && opts.length <= 20) score += 3;
+                return {
+                  autom, name, id, value: String(el.value || ''),
+                  options: opts, score, disabled: !!el.disabled,
+                };
+              }).filter((x) => x.score >= 10 || (
+                x.options.length >= 1 && x.options.length <= 12
+                && x.options.every((v) => /^\\d+$/.test(v))
+              ));
+              scored.sort((a, b) => b.score - a.score);
+              return {
+                found: scored[0] || null,
+                n: scored.length,
+                all: scored.slice(0, 4),
+              };
+            }"""
+        )
+        return info if isinstance(info, dict) else {}
+    except Exception as exc:  # noqa: BLE001
+        return {"found": None, "error": str(exc)}
+
+
+def _checkout_quantity(checkout_cfg: dict | None) -> int:
+    raw = 1
+    if isinstance(checkout_cfg, dict) and checkout_cfg.get("quantity") is not None:
+        raw = checkout_cfg.get("quantity")
+    try:
+        qty = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"checkout.quantity must be a whole number (got {raw!r})"
+        ) from exc
+    if qty < 1:
+        raise RuntimeError(f"checkout.quantity must be >= 1 (got {qty})")
+    return qty
+
+
+def set_bag_quantity(page, quantity: int, *, timer: StageTimer | None = None) -> None:
+    """Set bag line-item qty before Thanh Toán. Default 1 is already selected — no-op."""
+    want = int(quantity)
+    t0 = time.perf_counter()
+    page.locator('[data-autom="checkout"]').first.wait_for(
+        state="attached", timeout=8_000
+    )
+    info = _bag_quantity_select_info(page)
+    found = info.get("found") if isinstance(info, dict) else None
+    if not found:
+        if want == 1:
+            log("Bag quantity control not found — leaving Apple default 1")
+            return
+        raise RuntimeError(
+            f"Bag has no quantity dropdown (want {want}). "
+            f"debug={info!r}"
+        )
+    current = str(found.get("value") or "")
+    options = [str(x) for x in (found.get("options") or [])]
+    autom = found.get("autom") or found.get("id") or found.get("name") or "quantity"
+    log(
+        f"Bag quantity now={current} want={want} options={options} "
+        f"via={autom}"
+    )
+    if current == str(want):
+        ms = (time.perf_counter() - t0) * 1000
+        log(f"Bag quantity already {want} ({ms:.0f}ms)")
+        if timer:
+            timer.record("8 bag quantity", ms, kind="click")
+        return
+    if str(want) not in options:
+        raise RuntimeError(
+            f"checkout.quantity={want} is not in Apple's bag dropdown {options}. "
+            "iPhone is often capped at 2."
+        )
+    if found.get("autom"):
+        css = f'select[data-autom="{found["autom"]}"]'
+    elif found.get("id"):
+        css = f'select[id="{found["id"]}"]'
+    else:
+        css = 'select[name="quantity"]'
+    loc = page.locator(css).first
+    loc.select_option(value=str(want), timeout=3_000)
+    page.wait_for_function(
+        """({ css, want }) => {
+          const el = document.querySelector(css);
+          if (!el || String(el.value) !== String(want)) return false;
+          const btn = document.querySelector('[data-autom="checkout"]');
+          return !!(btn && !btn.disabled);
+        }""",
+        arg={"css": css, "want": str(want)},
+        timeout=10_000,
+    )
+    ms = (time.perf_counter() - t0) * 1000
+    log(f"FILL  bag quantity → {want}: {ms:.0f}ms")
+    if timer:
+        timer.record("8 bag quantity", ms, kind="click")
 
 
 def click_thanh_toan_now(page, timer: StageTimer | None = None) -> None:
@@ -4049,6 +4510,7 @@ def click_next_steps(
     click_xem_gio_hang_now(page, timer)
 
     if "/shop/bag" in page.url.lower() or "checkout" not in page.url.lower():
+        set_bag_quantity(page, _checkout_quantity(checkout_cfg), timer=timer)
         click_thanh_toan_now(page, timer)
 
     advance_checkout_to_payment(
@@ -4097,8 +4559,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(family_match_cfg, list):
             family_match_cfg = []
         family_match = [str(x) for x in family_match_cfg if str(x).strip()]
+        target = load_order_target(cfg)
+        if not family_match and str(target.get("year")) == "18":
+            family_match = ["18", "Pro Max"]
+            log("family_match empty — defaulting to ['18', 'Pro Max']")
         product_prefs = cfg.get("product_prefs") if isinstance(cfg.get("product_prefs"), dict) else {}
         use_dynamic = bool(product_prefs) or bool(family_candidates)
+        if str(target.get("year")) == "18":
+            # Never fall back to a leftover iPhone 17 product_url on launch night.
+            use_dynamic = True
         # Phase A budget only (hub + user-pick are separate). Default 20s — not minutes.
         unlock_timeout = args.unlock_timeout_sec or int(cfg.get("unlock_timeout_sec") or 20)
         family_user_pick_sec = float(
@@ -4118,6 +4587,16 @@ def main(argv: list[str] | None = None) -> int:
 
     print_checklist_reminder()
     log("DRY-RUN assist — declines only; never purchases")
+    if str(target.get("year")) == "18":
+        log(
+            f"ORDER LOCK: iPhone {target['year']} {target['model']} — "
+            "timed run will REFUSE 17 / Fold / Air"
+        )
+    else:
+        log(
+            f"TEST MODE: iPhone {target['year']} {target['model']} "
+            "(LAUNCH block still commented in config.yaml)"
+        )
     log(f"Persistent profile: {PROFILE_DIR}")
     log("Warm Chrome via CDP — we DISCONNECT only, never quit Chrome (keeps SSO / skips 2FA).")
     if use_dynamic:
@@ -4223,7 +4702,14 @@ def main(argv: list[str] | None = None) -> int:
 
                 timer = StageTimer()
                 if use_dynamic:
-                    candidates = family_candidates or [_product_family_url(product_url)]
+                    candidates = list(family_candidates)
+                    if not candidates:
+                        if str(target.get("year")) == "18":
+                            raise RuntimeError(
+                                "ORDER LOCK: family_url / family_urls missing. "
+                                "Refusing leftover product_url (that is iPhone 17 SSO fuel only)."
+                            )
+                        candidates = [_product_family_url(product_url)]
                     log(f"Dynamic timed run — poll/select on {candidates}")
                     wait_family_configure_ready(
                         page,
@@ -4233,12 +4719,15 @@ def main(argv: list[str] | None = None) -> int:
                         hub_url=family_hub_url,
                         family_match=family_match,
                         user_pick_timeout_sec=family_user_pick_sec,
+                        target=target,
                     )
+                    assert_family_is_order_target(page, target)
                     select_product_dimensions(
                         page,
                         product_prefs or {},
                         timer=timer,
                     )
+                    assert_sku_is_pro_max(page, target)
                 else:
                     log(f"Opening product (timed run): {product_url}")
                     open_product_page(page, product_url)
