@@ -42,18 +42,39 @@ If assist lands on sign-in, it is **waiting**, not frozen — finish 2FA in the 
 
 Checkout SSO (`secure*.store.apple.com`) is separate from storefront login. Best warm path: sign in once at account **and** once at checkout in the same open Chrome, then use `--stay-open` so the process doesn’t tear down that session.
 
-## Setup
+## Setup (Windows — primary)
 
-```bash
-cd ~/Projects/iphone-launch-sprint
-python3 -m venv .venv
-source .venv/bin/activate
+Prereqs: **Windows 10/11**, **Google Chrome**, **Python 3.10+**.
+
+```powershell
+cd path\to\iphone-launch-sprint-dynamic
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-playwright install chromium   # only needed for assist.py
-cp config.example.yaml config.yaml
+playwright install chrome
+copy config.example.yaml config.yaml
+# edit config.yaml — address, contact, product_prefs
 ```
 
-Practice product: **iPhone 17 · 6.3" · 256GB · Đen** on Apple VN (stand-in for iPhone 18).
+If Chrome is not in the default path:
+
+```powershell
+$env:CHROME_PATH = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+```
+
+### Fresh-machine workflow
+
+```powershell
+python assist.py --setup-login   # Apple ID + 2FA in assist Chrome (leave it open)
+python assist.py --warm-only     # prime checkout SSO, bag emptied; leave Chrome open
+python assist.py                 # timed dry-run → stops at saved card (never Đặt hàng)
+```
+
+Do **not** fully quit Chrome between warm and timed run (that drops SSO / forces 2FA again). Scripts only disconnect from CDP.
+
+Copy name / street / email / phone / product between computers; **edit CVV on that machine**. Full don’t-forget (setup 3–5, two delivery screens, timer): **checklist.md**.
+
+macOS/Linux also work (Chrome auto-detected). Practice product: **iPhone 17 Pro Max · Cam Vũ Trụ · 256GB**.
 
 ## Commands
 

@@ -1,5 +1,9 @@
 # Copy to config.yaml and edit:
 #   cp config.example.yaml config.yaml
+#
+# PRACTICE vs LAUNCH (iPhone 18): see comments in config.yaml.
+# Launch night flip is mainly: family_match: ["18", "Pro"]
+# Keep dry_run: true, keep warm_product_url on a LIVE iPhone 17 SKU.
 
 dry_run: true
 
@@ -8,30 +12,28 @@ label: "iPhone 17 256GB Đen (practice) — swap label at launch"
 # =============================================================================
 # FAMILY URL — timed run polls until configure unlocks
 # =============================================================================
-# PRACTICE (working):
-family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17"
-
-# --- RUMORS ONLY (not live until Apple publishes) — uncomment at launch -----
-# Fall 2026 rumor = Pro / Pro Max share one page (same pattern as iphone-17-pro):
-# family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro"
-#
+# Guessed family URL(s) — soft-404 ("Không Tìm Thấy Trang") is skipped quickly
+family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17-pro"
 # family_urls:
-#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro"   # MOST LIKELY fall 2026
-#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-18"       # rumor: maybe spring 2027
-#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-air"      # Air 2 slug unknown
-#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-fold"     # foldable wild-card
-#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-ultra"    # alternate rumor name
-#
-# Keep practice family_url until launch morning — rumor links 404 early.
-
-unlock_timeout_sec: 180
+#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro"
+#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-18"
+family_hub_url: "https://www.apple.com/vn/shop/buy-iphone/"
+# Hub auto-pick: card text/href must contain ALL tokens. Else you click the tile.
+family_match: ["17", "Pro"]
+family_user_pick_timeout_sec: 45
+# Phase A budget only (seconds). Then hub scrape → optional user click.
+unlock_timeout_sec: 20
 
 product_prefs:
   # Pro pages only: 6.3 = Pro, 6.9 = Pro Max (rumor: same for 18)
   screensizes: ["6,3", "6.3", "6_3inch", "6_3"]
-  # colors: practice iPhone 17 VN — replace with real 18 Pro names at launch
+  # colors: substring OR regex (re:cam|orange  /  /cam.*trụ/i)
+  # No match → wait_user (you click in Chrome; continues ~50ms) | stop | failover
   colors: ["Đen", "black"]
   storages: ["256GB", "256gb", "256"]
+  on_miss: wait_user
+  user_pick_timeout_sec: 20
+  allow_failover: false
 
 # WORKING warm deep link (iPhone 17 6.3" 256GB Đen) — keep for --warm-only SSO
 warm_product_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17/m%C3%A0n-h%C3%ACnh-6,3-inch-256gb-%C4%91en"
@@ -52,8 +54,17 @@ manual_clicks:
 checkout:
   location_city: "Thành phố Hồ Chí Minh"
   location_district: "Quận Bình Thạnh"
-  use_new_address: true
-  address:
+  # false = select matching saved shipping address (visible name + street).
+  # Falls back to Sử dụng địa chỉ mới if none match. true = always fill new.
+  use_new_address: false
+  # Per-card / per-machine. Name, street, email, phone, product can be copied; CVV cannot.
+  cvv: ""
+  # OFF: fix card billing in Apple Account before running (recommended).
+  # ON + billing_address below = slow ~40s Chỉnh Sửa Địa Chỉ popup safety net.
+  sync_billing_address: false
+  force_sync_billing_address: false
+  # Delivery destination
+  shipping_address:
     first_name: "Your"
     last_name: "Name"
     street: "Street address"
@@ -62,6 +73,16 @@ checkout:
     city: "Quận Bình Thạnh"
     district: "Phường 11"
     postal_code: ""
+  # Optional card-billing override (keep commented unless sync_billing_address: true)
+  # billing_address:
+  #   first_name: "Your"
+  #   last_name: "Name"
+  #   street: "Street address"
+  #   street2: ""
+  #   state: "Thành phố Hồ Chí Minh"
+  #   city: "Quận 7"
+  #   district: "Phường Tân Hưng"
+  #   postal_code: ""
   contact:
     email: "you@example.com"
     phone: "0900000000"

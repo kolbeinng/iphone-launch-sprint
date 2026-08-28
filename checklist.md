@@ -1,41 +1,75 @@
-# Night-before prep checklist (manual)
+# Don't forget
 
-Do this yourself. The scripts will **remind** you; they will **not** enter your password or pay for you.
+Scripts never enter your Apple password and never click **Đặt hàng**.
 
-## 1) Same browser, really signed in
+Copy `config.yaml` between computers for **name, street, email, phone, product**.
+**CVV is the one field that changes** (different card / different machine). Edit `checkout.cvv` on that computer. Do not commit it; do not email it.
 
-Apple login is **per browser**. Being signed into Chrome does nothing if `launch.py` opens Safari.
+The script always applies `shipping_address` from config:
 
-- [ ] Pick one browser and set it in `config.yaml` (`browser: "Safari"` or `"Google Chrome"`)
-- [ ] Run: `python launch.py --check-session`
-- [ ] On the page that opens: if you see **Đăng nhập / Sign In**, sign in now (2FA nearby)
-- [ ] Re-run `--check-session` until the account page loads **without** asking to sign in
-- [ ] Optional stronger path: `python assist.py --setup-login` (waits for Apple ID + 2FA in its own Chromium profile), then `python assist.py`
+- If Apple already shows a saved radio whose **visible name + street** match → click it (~20ms).
+- If not → fill **Sử dụng địa chỉ mới** from the same config (slower, still the right address).
 
-Homepage alone is a weak check. Use the **account** page.
+Same Apple ID on a new computer: after login, the saved address usually appears by itself. First `--now` should click it. If Apple has no saved card yet, that first run creates it.
 
-## 2) Shipping & payment
+---
 
-- [ ] Vietnam shipping address saved
-- [ ] Payment method saved / Apple Pay ready
-- [ ] You can reach checkout on a normal product and see ship/pay prefilled — then **cancel**
+## Per-computer setup (once, days before — not at 18:50)
 
-## 3) After the deep link opens (still manual / assist)
+Do this on **the computer you will use at T-0**. Practice on another machine does not count.
 
-Deep link skips **model / storage / color only**. You still must:
+3. `python assist.py --setup-login`  
+   Sign in + 2FA in the **script’s Chrome** (not everyday Chrome). Leave that window open. Never ⌘Q / quit Chrome after this.
 
-1. **Apple Trade In** → **Không đổi cũ lấy mới**
-2. **AppleCare** → **Không có bảo hành AppleCare+**
-3. **Thêm vào giỏ hàng** → **Xem Giỏ Hàng** → **Thanh Toán** (checkout form)
-4. **You** place the order — scripts stop before that
+4. `python assist.py --warm-only`  
+   Second login: **checkout** SSO. 2FA again if asked. Adds a practice iPhone, reaches checkout, **empties the bag**. Leave Chrome open.
 
-Or run `python assist.py` through step 3, then you buy.
+5. `python assist.py --now`  
+   Full dry-run → stop at Đặt hàng (not clicked). Repeat until it is boring (2–3 clean runs). Second run should select the saved shipping radio, not type a new address.
 
-## 4) Launch readiness
+Also, once in a normal browser: Apple ID → Payment → card **billing** address already correct (Vietnam quận/phường, no junk postal). Do **not** leave that for T-0 (popup ~40s).
 
-- [ ] `config.yaml` has the exact product deep link
-- [ ] Alarm set for Vietnam launch time (`Asia/Ho_Chi_Minh`)
-- [ ] Notifications on; Focus / DND off
-- [ ] `dry_run: true` for practice — do not Place Order
+---
 
-If you are not signed in, trade-in/AppleCare speed does not matter — you already lost.
+## Launch day (same computer, same open Chrome)
+
+- **T−10:** `python assist.py --warm-only` if Chrome isn’t already warm. 2FA phone in hand. Bag must end empty.
+- **T−0:** `python assist.py --at-launch` (sleeps until `launch_at`). Do not add extra seconds after 19:00.
+- **You** click Đặt hàng.
+
+`--now` = practice. `--at-launch` = real timer. Don’t mix them on the night. Don’t quit Chrome between warm and sprint.
+
+---
+
+## Two different “where do we deliver?” screens
+
+Apple will not let you skip these. They are not the same thing.
+
+| Page | What it is | Do we need it? |
+|------|------------|----------------|
+| **Fulfillment** (“Giao hàng đến”) | City so delivery slots exist | **The page, not the editor.** If it already shows HCM, we skip re-selecting and click **Tiếp tục đến Địa Chỉ Giao Hàng**. The ~10s after Continue is Apple loading Shipping. |
+| **Shipping** — “Chúng tôi giao hàng cho bạn đến địa chỉ nào?” | Pick the **street** (saved radio vs new) | **Yes.** This is where the right house is chosen. Saved match ~20ms. |
+
+We only open the city/quận editor if the label is **not** already HCM (wrong city). Apple’s label usually never shows Bình Thạnh even after an edit — so redoing it every time was wasted clicks.
+
+---
+
+## Night-before extras
+
+- [ ] `config.yaml`: product prefs / family_match ready for launch (not leftover practice “17 Pro”)
+- [ ] `checkout.cvv` is the card on **this** machine
+- [ ] `dry_run: true` until you are ready to click Đặt hàng yourself
+- [ ] Alarm `Asia/Ho_Chi_Minh`; notifications on; Focus / DND off
+
+If you are not signed in, speed does not matter — you already lost.
+
+---
+
+## Timer (read WAIT vs CLICK)
+
+End of each `--now` log:
+
+- **US (CLICK/FILL)** — our clicks. Should stay small (under ~1s except location ~0.6s).
+- **APPLE (WAIT/NAV/POLL)** — page load / checkout hop. ~10s each is Apple. Do not “fix” this by clicking more.
+
+If a long pause has a `WAIT  Apple hop … heartbeat` line, we are idle. The page is loading.

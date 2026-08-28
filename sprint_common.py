@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -28,7 +29,8 @@ ASSIST_PROFILE_DIR = (
 # Default 9223 so this worktree does not collide with practice kit on :9222.
 ASSIST_CDP_PORT = int(os.environ.get("ASSIST_CDP_PORT") or "9223")
 ASSIST_CDP_URL = f"http://127.0.0.1:{ASSIST_CDP_PORT}"
-CHROME_MAC = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+IS_WINDOWS = sys.platform.startswith("win")
+IS_MAC = sys.platform == "darwin"
 
 
 # Account page redirects to sign-in when logged out — better session probe than homepage.
@@ -36,8 +38,8 @@ DEFAULT_WARM_URL = "https://www.apple.com/vn/shop/goto/account"
 DEFAULT_SESSION_URL = "https://www.apple.com/vn/shop/goto/account"
 
 USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
 # Exact Vietnamese labels on apple.com/vn buy flow (iPhone 17 page JSON).
@@ -47,6 +49,47 @@ DEFAULT_NO_APPLECARE_LABEL = "Không có bảo hành AppleCare+"
 
 class ConfigError(Exception):
     pass
+
+
+def find_chrome_executable() -> Path:
+    """Locate Google Chrome on Windows / macOS / Linux (env override first)."""
+    env = (os.environ.get("CHROME_PATH") or "").strip()
+    if env:
+        p = Path(env)
+        if p.exists():
+            return p
+        raise ConfigError(f"CHROME_PATH set but not found: {env}")
+
+    candidates: list[Path] = []
+    if IS_WINDOWS:
+        local = os.environ.get("LOCALAPPDATA", "")
+        pf = os.environ.get("PROGRAMFILES", r"C:\Program Files")
+        pf86 = os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
+        candidates = [
+            Path(local) / "Google" / "Chrome" / "Application" / "chrome.exe",
+            Path(pf) / "Google" / "Chrome" / "Application" / "chrome.exe",
+            Path(pf86) / "Google" / "Chrome" / "Application" / "chrome.exe",
+        ]
+        which = shutil.which("chrome") or shutil.which("chrome.exe")
+        if which:
+            candidates.insert(0, Path(which))
+    elif IS_MAC:
+        candidates = [
+            Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+        ]
+    else:
+        for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+            which = shutil.which(name)
+            if which:
+                candidates.append(Path(which))
+
+    for p in candidates:
+        if p and p.exists():
+            return p
+    raise ConfigError(
+        "Google Chrome not found. Install Chrome, or set CHROME_PATH to chrome.exe.\n"
+        r"  Windows typical: C:\Program Files\Google\Chrome\Application\chrome.exe"
+    )
 
 
 def _port_open(port: int, host: str = "127.0.0.1") -> bool:
@@ -59,11 +102,23 @@ def _port_open(port: int, host: str = "127.0.0.1") -> bool:
 
 def _start_warm_chrome(user_data: str, port: int = ASSIST_CDP_PORT) -> None:
     """Start Google Chrome once with remote debugging — left running between scripts."""
-    if not CHROME_MAC.exists():
-        raise ConfigError(f"Google Chrome not found at {CHROME_MAC}")
+    chrome = find_chrome_executable()
+    log(f"Chrome binary: {chrome}")
+    creationflags = 0
+    popen_kwargs: dict[str, Any] = {
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if IS_WINDOWS:
+        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP — survive parent exit
+        creationflags = 0x00000008 | 0x00000200
+        popen_kwargs["creationflags"] = creationflags
+    else:
+        popen_kwargs["start_new_session"] = True
+
     subprocess.Popen(  # noqa: S603
         [
-            str(CHROME_MAC),
+            str(chrome),
             f"--user-data-dir={user_data}",
             f"--remote-debugging-port={port}",
             "--no-first-run",
@@ -71,19 +126,22 @@ def _start_warm_chrome(user_data: str, port: int = ASSIST_CDP_PORT) -> None:
             "--disable-sync",
             "about:blank",
         ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
+        **popen_kwargs,
     )
     deadline = time.time() + 20
     while time.time() < deadline:
         if _port_open(port):
             return
         time.sleep(0.2)
+    quit_hint = (
+        "fully Quit Chrome (check tray) once, then re-run"
+        if IS_WINDOWS
+        else "Quit Chrome (⌘Q) once, then re-run"
+    )
     raise ConfigError(
         f"Chrome did not open CDP on port {port}. "
-        "If an old assist Chrome is open without debugging, Quit Chrome (⌘Q) once, "
-        "then re-run — after that we keep it warm (no quit)."
+        f"If an old assist Chrome is open without debugging, {quit_hint} — "
+        "after that we keep it warm (no quit)."
     )
 
 
@@ -222,21 +280,98 @@ def parse_duration(text: str) -> timedelta:
     raise ConfigError(f"Invalid duration: {text} (use 90s, 2m, 1h)")
 
 
+def now_in_tz(tz: ZoneInfo) -> datetime:
+    return datetime.now(tz)
+
+
+def format_ts(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
+def wait_until(target: datetime, tz: ZoneInfo, label: str = "T-0") -> None:
+    """
+    Sleep until target time (tz-aware). Logs countdown; wakes within ~50ms.
+    Do NOT add artificial +5s — soft-404 poll handles 'not live yet'.
+    """
+    target = target.astimezone(tz)
+    log(f"Waiting until {format_ts(target)} ({label})…")
+    while True:
+        now = now_in_tz(tz)
+        remaining = (target - now).total_seconds()
+        if remaining <= 0:
+            log(f"{label} — GO (late by {-remaining * 1000:.0f}ms)" if remaining < -0.05 else f"{label} — GO")
+            return
+        if remaining > 30:
+            log(f"  {label}: {remaining / 60:.1f} min left")
+            time.sleep(min(10.0, remaining - 25))
+        elif remaining > 5:
+            log(f"  {label}: {remaining:.1f}s left")
+            time.sleep(1.0)
+        else:
+            # Tight spin for the last seconds
+            time.sleep(min(0.05, remaining))
+
+
 def open_url(url: str, browser: str) -> None:
+    """Open URL in the named browser (macOS) or default/Chrome (Windows)."""
     encoded = encode_url(url)
-    subprocess.run(["open", "-a", browser, encoded], check=False)  # noqa: S603
+    if IS_WINDOWS:
+        # Prefer Chrome if configured/named; else default handler.
+        name = (browser or "").lower()
+        if "chrome" in name:
+            try:
+                chrome = find_chrome_executable()
+                subprocess.Popen(  # noqa: S603
+                    [str(chrome), encoded],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=0x00000008 | 0x00000200,
+                )
+                return
+            except ConfigError:
+                pass
+        os.startfile(encoded)  # type: ignore[attr-defined]
+        return
+    if IS_MAC:
+        subprocess.run(["open", "-a", browser, encoded], check=False)  # noqa: S603
+        return
+    subprocess.run(["xdg-open", encoded], check=False)  # noqa: S603
 
 
 def notify_macos(title: str, message: str) -> None:
-    # Escape for AppleScript
-    t = title.replace("\\", "\\\\").replace('"', '\\"')
-    m = message.replace("\\", "\\\\").replace('"', '\\"')
-    script = f'display notification "{m}" with title "{t}"'
-    subprocess.run(["osascript", "-e", script], check=False)  # noqa: S603
+    """Best-effort desktop notification (name kept for call-site compatibility)."""
+    if IS_MAC:
+        t = title.replace("\\", "\\\\").replace('"', '\\"')
+        m = message.replace("\\", "\\\\").replace('"', '\\"')
+        script = f'display notification "{m}" with title "{t}"'
+        subprocess.run(["osascript", "-e", script], check=False)  # noqa: S603
+        return
+    if IS_WINDOWS:
+        # Console ping is enough; avoid Toast COM deps
+        log(f"NOTIFY  {title}: {message[:160]}")
+        return
+    # Linux: try notify-send
+    subprocess.run(  # noqa: S603
+        ["notify-send", title, message],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def beep() -> None:
-    subprocess.run(["osascript", "-e", "beep"], check=False)  # noqa: S603
+    if IS_MAC:
+        subprocess.run(["osascript", "-e", "beep"], check=False)  # noqa: S603
+        return
+    if IS_WINDOWS:
+        try:
+            import winsound  # type: ignore[import-untyped]
+
+            winsound.MessageBeep(-1)
+        except Exception:  # noqa: BLE001
+            print("\a", end="", flush=True)
+        return
+    print("\a", end="", flush=True)
 
 
 def log(message: str) -> None:

@@ -6,8 +6,8 @@ Dry-run browser assist for Apple VN buy flow.
 - Waits for Apple ID sign-in instead of hanging on selectors
 - Opens the product deep link
 - Selects NO trade-in and NO AppleCare+
-- Continues checkout: fulfillment → saved shipping → saved card
-- STOPS at payment method (before review / Đặt hàng)
+- Continues checkout: fulfillment → shipping → saved card + CVV → review
+- STOPS at Đặt hàng / place-order (never clicks it)
 
 Never places an order.
 """
@@ -18,6 +18,7 @@ import argparse
 import re
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlparse, urlsplit, urlunsplit
 
@@ -29,47 +30,171 @@ from sprint_common import (
     ConfigError,
     beep,
     click_labels,
+    config_timezone,
     die,
     disconnect_assist_browser,
+    format_ts,
     launch_assist_browser,
     load_config,
     log,
     notify_macos,
+    now_in_tz,
+    parse_duration,
+    parse_launch_at,
     print_checklist_reminder,
     print_manual_clicks,
     require_dry_run,
     validate_store_url,
+    wait_until,
 )
 
 PROFILE_DIR = ASSIST_PROFILE_DIR
 
 
 class StageTimer:
-    """Simple wall-clock stage timer for efficiency debugging."""
+    """Wall-clock stage timer for efficiency debugging (click vs wait split)."""
+
+    _KIND_PREFIX = {
+        "click": "CLICK",
+        "wait": "WAIT",
+        "nav": "NAV",
+        "fill": "FILL",
+        "poll": "POLL",
+    }
 
     def __init__(self) -> None:
         self.t0 = time.perf_counter()
-        self.marks: list[tuple[str, float]] = []
+        self.marks: list[tuple[str, float, str]] = []
         self._last = self.t0
 
-    def mark(self, name: str) -> float:
+    def elapsed_ms(self) -> float:
+        return (time.perf_counter() - self.t0) * 1000
+
+    def record(self, name: str, ms: float, *, kind: str = "") -> float:
+        """Record an already-measured span and log it immediately."""
+        self.marks.append((name, ms, kind))
+        self._last = time.perf_counter()
+        prefix = self._KIND_PREFIX.get(kind, "⏱")
+        log(f"{prefix}  {name}: {ms:.0f}ms (total {self.elapsed_ms():.0f}ms)")
+        return ms
+
+    def mark(self, name: str, *, kind: str = "") -> float:
+        """Record time since the previous mark/record."""
         now = time.perf_counter()
         delta_ms = (now - self._last) * 1000
-        total_ms = (now - self.t0) * 1000
-        self.marks.append((name, delta_ms))
-        self._last = now
-        log(f"⏱  {name}: {delta_ms:.0f}ms (total {total_ms:.0f}ms)")
-        return delta_ms
+        return self.record(name, delta_ms, kind=kind)
+
+    def since(self, t_start: float, name: str, *, kind: str = "") -> float:
+        return self.record(name, (time.perf_counter() - t_start) * 1000, kind=kind)
+
+    @contextmanager
+    def span(self, name: str, *, kind: str = ""):
+        t = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.since(t, name, kind=kind)
 
     def report(self, title: str = "TIMER REPORT") -> None:
         total = (time.perf_counter() - self.t0) * 1000
         log("=" * 48)
         log(title)
-        for name, ms in self.marks:
+        us_ms = 0.0
+        apple_ms = 0.0
+        for name, ms, kind in self.marks:
+            prefix = self._KIND_PREFIX.get(kind, "⏱")
             bar = "█" * min(int(ms / 25), 40)
-            log(f"  {ms:7.0f}ms  {name}  {bar}")
-        log(f"  {total:7.0f}ms  TOTAL")
+            log(f"  {prefix:5} {ms:7.0f}ms  {name}  {bar}")
+            if kind in ("click", "fill"):
+                us_ms += ms
+            elif kind in ("wait", "nav", "poll"):
+                apple_ms += ms
+        log(f"        {total:7.0f}ms  TOTAL")
+        log("WHO")
+        us_pct = (us_ms / total * 100) if total else 0
+        apple_pct = (apple_ms / total * 100) if total else 0
+        log(
+            f"  US     (CLICK/FILL)     {us_ms:7.0f}ms  {us_pct:5.1f}%  "
+            "our clicks — if this is big, we are slow"
+        )
+        log(
+            f"  APPLE  (WAIT/NAV/POLL)  {apple_ms:7.0f}ms  {apple_pct:5.1f}%  "
+            "page load / checkout hop — we are idle"
+        )
+        if self.marks:
+            slow = sorted(self.marks, key=lambda x: x[1], reverse=True)[:8]
+            log("SLOWEST")
+            for name, ms, kind in slow:
+                pct = (ms / total * 100) if total else 0
+                prefix = self._KIND_PREFIX.get(kind, "⏱")
+                log(f"  {prefix:5} {ms:7.0f}ms  {pct:5.1f}%  {name}")
         log("=" * 48)
+
+
+def _wait_js_heartbeat(
+    page,
+    js: str,
+    *,
+    label: str,
+    timeout_ms: int = 15_000,
+    beat_ms: int = 1000,
+    arg=None,
+    snapshot_js: str | None = None,
+) -> float:
+    """
+    Poll a JS predicate with a 1s heartbeat.
+
+    Apple checkout hops (Fulfillment→Shipping, etc.) sit on the same page for
+    ~10s while graviton answers. A silent wait_for_function looks like a hang;
+    this logs elapsed + _s= so you see immediately that *we* are idle on Apple.
+    """
+    t0 = time.perf_counter()
+    deadline = t0 + timeout_ms / 1000.0
+    last_beat = 0.0
+    log(f"WAIT  {label} — heartbeat {beat_ms}ms (cap {timeout_ms}ms)")
+    while time.perf_counter() < deadline:
+        try:
+            ok = page.evaluate(js, arg) if arg is not None else page.evaluate(js)
+        except Exception:  # noqa: BLE001
+            ok = False
+        if ok:
+            ms = (time.perf_counter() - t0) * 1000
+            log(f"WAIT  {label} READY: {ms:.0f}ms")
+            return ms
+        now = time.perf_counter()
+        elapsed = (now - t0) * 1000
+        if elapsed - last_beat >= beat_ms:
+            snap = ""
+            try:
+                if snapshot_js:
+                    snap = page.evaluate(snapshot_js)
+                else:
+                    snap = _checkout_step(page)
+            except Exception:  # noqa: BLE001
+                snap = "?"
+            log(f"WAIT  {label} … {elapsed:.0f}ms  {snap}")
+            last_beat = elapsed
+        page.wait_for_timeout(40)
+    raise TimeoutError(f"{label} timed out after {timeout_ms}ms")
+
+
+_SNAP_CHECKOUT = """() => {
+  const s = (location.search.match(/[?&]_s=([^&]+)/) || [])[1] || '';
+  const newAddr = !!document.querySelector('input[data-autom="newAddress"]');
+  const savedCard = !!document.querySelector('[data-autom="checkout-billingOptions-SAVED_CARD"]');
+  const cvv = !!document.querySelector('[data-autom="security-code-input"]');
+  const place = !!document.querySelector(
+    '[data-autom="placeOrder"], [data-autom="place-order"], #rs-checkout-place-order-button'
+  );
+  const dist = document.querySelector('select[data-autom="form-field-district"]');
+  const distN = dist ? dist.options.length : 0;
+  return '_s=' + s
+    + ' newAddr=' + (newAddr ? 'Y' : 'N')
+    + ' card=' + (savedCard ? 'Y' : 'N')
+    + ' cvv=' + (cvv ? 'Y' : 'N')
+    + ' place=' + (place ? 'Y' : 'N')
+    + ' phuongOpts=' + distN;
+}"""
 
 
 SIGNIN_HOST_HINTS = (
@@ -144,6 +269,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--stay-open",
         action="store_true",
         help="Do not auto-close Chrome; keep session warm until YOU close the window",
+    )
+    timing = p.add_mutually_exclusive_group()
+    timing.add_argument(
+        "--now",
+        action="store_true",
+        help="Fire timed run immediately (default). Practice / resume.",
+    )
+    timing.add_argument(
+        "--at-launch",
+        action="store_true",
+        help="Sleep until config launch_at, then sprint (use AFTER --warm-only on launch day)",
+    )
+    timing.add_argument(
+        "--in",
+        dest="in_duration",
+        metavar="DURATION",
+        help="Practice timer: wait DURATION then sprint (e.g. 30s, 2m)",
     )
     return p
 
@@ -343,16 +485,60 @@ def _norm_pref(s: str) -> str:
     return s
 
 
+def _pref_regex(pref: str) -> re.Pattern[str] | None:
+    """
+    Optional regex prefs for weird launch-day color names.
+      re:cam|orange|cosmic
+      /cam.?v[uũ].*tr[uụ]|cosmicorange/i
+    """
+    raw = (pref or "").strip()
+    if not raw:
+        return None
+    if raw.lower().startswith("re:"):
+        body = raw[3:]
+        if not body:
+            return None
+        try:
+            return re.compile(body, re.I | re.UNICODE)
+        except re.error as exc:
+            log(f"WARNING: bad color regex {raw!r}: {exc}")
+            return None
+    if len(raw) >= 3 and raw.startswith("/") and raw.count("/") >= 2:
+        end = raw.rfind("/")
+        if end > 0:
+            body, flags_s = raw[1:end], raw[end + 1 :]
+            flags = re.UNICODE
+            if "i" in flags_s.lower() or not flags_s:
+                flags |= re.I
+            try:
+                return re.compile(body, flags)
+            except re.error as exc:
+                log(f"WARNING: bad color regex {raw!r}: {exc}")
+                return None
+    return None
+
+
 def _pref_matches(option: dict, pref: str) -> bool:
     """True if preference matches autom / value / label of a dimension option."""
+    raw_haystacks = [
+        option.get("autom") or "",
+        option.get("value") or "",
+        option.get("label") or "",
+    ]
+    # Regex prefs (re:… or /…/i) — match against original + normalized text
+    rx = _pref_regex(pref)
+    if rx is not None:
+        for h in raw_haystacks:
+            if not h:
+                continue
+            if rx.search(h) or rx.search(_norm_pref(h)):
+                return True
+        return False
+
     want = _norm_pref(pref)
     if not want:
         return False
-    haystacks = [
-        _norm_pref(option.get("autom") or ""),
-        _norm_pref(option.get("value") or ""),
-        _norm_pref(option.get("label") or ""),
-    ]
+    haystacks = [_norm_pref(h) for h in raw_haystacks]
     for h in haystacks:
         if not h:
             continue
@@ -365,6 +551,120 @@ def _pref_matches(option: dict, pref: str) -> bool:
         if len(want) >= 2 and want.replace(".", "") in h.replace(".", ""):
             return True
     return False
+
+
+def _format_dimension_options(opts: list[dict]) -> str:
+    bits = []
+    for o in opts:
+        bits.append(
+            f"{o.get('autom') or o.get('value') or '?'}="
+            f"{(o.get('label') or '')[:40]!r}"
+            f"{'(disabled)' if o.get('disabled') else ''}"
+        )
+    return ", ".join(bits) if bits else "(none)"
+
+
+def _dimension_pretty(dimension_name: str) -> str:
+    return {
+        "dimensionScreensize": "SIZE",
+        "dimensionColor": "COLOR",
+        "dimensionCapacity": "STORAGE",
+    }.get(dimension_name, dimension_name)
+
+
+def _checked_dimension_key(opts: list[dict]) -> str:
+    for o in opts:
+        if o.get("checked"):
+            return str(o.get("autom") or o.get("value") or "")
+    return ""
+
+
+def _scroll_dimension_into_view(page, dimension_name: str) -> None:
+    """Bring the size/color/storage radios into the viewport for a manual click."""
+    try:
+        page.evaluate(
+            """(name) => {
+              const el = document.querySelector(
+                'input[type="radio"][name="' + name + '"]:not([disabled])'
+              ) || document.querySelector('input[type="radio"][name="' + name + '"]');
+              if (!el) return false;
+              const anchor = el.closest(
+                'fieldset, .rf-form-selector, .form-selector, [role="radiogroup"], section, form'
+              ) || el;
+              anchor.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
+              return true;
+            }""",
+            dimension_name,
+        )
+        # Sticky header can cover the top of the section — nudge a bit
+        page.evaluate("() => window.scrollBy(0, -80)")
+        log(f"USER PICK  scrolled to {_dimension_pretty(dimension_name)} section")
+    except Exception as exc:  # noqa: BLE001
+        log(f"USER PICK  scroll failed (continuing): {exc}")
+
+
+def _wait_user_dimension_pick(
+    page,
+    dimension_name: str,
+    *,
+    baseline_key: str = "",
+    timeout_sec: float = 20.0,
+    poll_ms: int = 50,
+) -> dict:
+    """
+    Fast handoff: user clicks the radio in Chrome; we continue within ~poll_ms.
+    Detects any newly checked option (or first check if none was checked).
+    """
+    pretty = _dimension_pretty(dimension_name)
+    _scroll_dimension_into_view(page, dimension_name)
+    available = _format_dimension_options(_list_dimension_options(page, dimension_name))
+    log(
+        f"USER PICK  click {pretty} in Chrome NOW "
+        f"(poll={poll_ms}ms, timeout={timeout_sec:.0f}s) — available=[{available}]"
+    )
+    beep()
+    notify_macos(
+        f"Assist — click {pretty}",
+        f"No auto-match. Click {pretty} in Chrome — script continues instantly.",
+    )
+
+    t0 = time.perf_counter()
+    deadline = t0 + max(3.0, timeout_sec)
+    last_log = 0.0
+    while time.perf_counter() < deadline:
+        opts = _list_dimension_options(page, dimension_name)
+        key = _checked_dimension_key(opts)
+        # Continue as soon as user has a selection that differs from baseline,
+        # or any selection if nothing was checked before.
+        if key and (not baseline_key or key != baseline_key):
+            chosen = next(
+                (o for o in opts if (o.get("autom") or o.get("value")) == key),
+                None,
+            )
+            if chosen:
+                ms = (time.perf_counter() - t0) * 1000
+                log(
+                    f"USER PICK  {pretty} detected in {ms:.0f}ms → "
+                    f"{chosen.get('autom') or chosen.get('value')} "
+                    f"({(chosen.get('label') or '')[:40]})"
+                )
+                return chosen
+        # If baseline was already wrong/matched-none but user re-clicks same,
+        # also accept a checked option after a tiny grace if prefs were empty?
+        # Keep strict: require change from baseline when baseline set.
+        now = time.perf_counter()
+        if now - last_log >= 2.0:
+            log(
+                f"USER PICK  waiting for {pretty}… "
+                f"{(now - t0):.1f}s / {timeout_sec:.0f}s"
+            )
+            last_log = now
+        page.wait_for_timeout(poll_ms)
+
+    raise RuntimeError(
+        f"Timed out waiting for user to click {pretty} ({timeout_sec:.0f}s). "
+        f"Available: [{available}]"
+    )
 
 
 def _list_dimension_options(page, dimension_name: str) -> list[dict]:
@@ -402,13 +702,26 @@ def _select_dimension_by_prefs(
     timer: StageTimer | None = None,
     mark: str = "",
     timeout_ms: int = 12_000,
+    allow_failover: bool = False,
+    on_miss: str = "wait_user",
+    user_pick_timeout_sec: float = 20.0,
 ) -> str:
     """
-    Pick first enabled option matching ordered prefs.
-    Returns selected autom/value. Raises if none match.
+    Pick first enabled option matching ordered prefs (substring or re:/… regex).
+    Returns selected autom/value.
+
+    on_miss when nothing matches:
+      wait_user — beep + poll ~50ms for your click in Chrome (default, fast)
+      stop — raise
+      failover — first enabled option (dangerous on launch day)
     """
-    deadline = time.perf_counter() + timeout_ms / 1000
+    t0 = time.perf_counter()
+    deadline = t0 + timeout_ms / 1000
     last_opts: list[dict] = []
+    miss_mode = (on_miss or "wait_user").strip().lower()
+    if allow_failover:
+        miss_mode = "failover"
+
     while time.perf_counter() < deadline:
         opts = _list_dimension_options(page, dimension_name)
         last_opts = opts
@@ -419,24 +732,74 @@ def _select_dimension_by_prefs(
         for o in enabled:
             if o.get("checked") and any(_pref_matches(o, p) for p in prefs):
                 picked = o.get("autom") or o.get("value") or "?"
-                log(f"Dimension {dimension_name} already selected: {picked}")
+                wall_ms = (time.perf_counter() - t0) * 1000
+                log(
+                    f"Dimension {dimension_name} already selected: {picked} "
+                    f"({wall_ms:.0f}ms)"
+                )
                 if timer and mark:
-                    timer.mark(mark)
+                    timer.record(mark, wall_ms, kind="click")
                 return str(picked)
         chosen = None
+        matched_pref = None
+        user_picked = False
         for pref in prefs:
             for o in enabled:
                 if _pref_matches(o, pref):
                     chosen = o
+                    matched_pref = pref
                     break
             if chosen:
                 break
         if not chosen:
-            chosen = enabled[0]
+            available = _format_dimension_options(opts)
             log(
-                f"WARNING: no pref matched for {dimension_name}; "
-                f"failover → {chosen.get('autom') or chosen.get('value')}"
+                f"No pref matched for {dimension_name}; prefs={prefs!r}; "
+                f"available=[{available}]"
             )
+            if miss_mode == "failover":
+                chosen = enabled[0]
+                log(
+                    f"WARNING: failover → "
+                    f"{chosen.get('autom') or chosen.get('value')} "
+                    f"({(chosen.get('label') or '')[:40]})"
+                )
+            elif miss_mode == "wait_user":
+                baseline = _checked_dimension_key(opts)
+                chosen = _wait_user_dimension_pick(
+                    page,
+                    dimension_name,
+                    baseline_key=baseline,
+                    timeout_sec=user_pick_timeout_sec,
+                    poll_ms=50,
+                )
+                user_picked = True
+            else:
+                raise RuntimeError(
+                    f"No {dimension_name} match for prefs={prefs!r}. "
+                    f"Available: [{available}]. "
+                    "Set product_prefs.on_miss: wait_user (click in Chrome) "
+                    "or allow_failover: true."
+                )
+        else:
+            log(
+                f"Pref match {dimension_name}: pref={matched_pref!r} → "
+                f"{chosen.get('autom') or chosen.get('value')} "
+                f"({(chosen.get('label') or '')[:40]})"
+            )
+
+        # User already clicked — don't re-click, just continue
+        if user_picked and chosen.get("checked"):
+            wall_ms = (time.perf_counter() - t0) * 1000
+            picked = chosen.get("autom") or chosen.get("value") or "?"
+            log(
+                f"Selected {dimension_name}: {picked} "
+                f"(user click, wall={wall_ms:.0f}ms)"
+            )
+            if timer and mark:
+                timer.record(mark, wall_ms, kind="click")
+            return str(picked)
+
         autom = chosen.get("autom") or ""
         sel = (
             f'[data-autom="{autom}"]'
@@ -444,7 +807,8 @@ def _select_dimension_by_prefs(
             else f'input[name="{dimension_name}"][value="{chosen.get("value")}"]'
         )
         hint = (chosen.get("label") or "").split(" Chú thích")[0].strip()
-        _select_radio_until_checked(
+        wait_opts_ms = (time.perf_counter() - t0) * 1000
+        sel_ms = _select_radio_until_checked(
             page,
             sel,
             label=f"{dimension_name}:{autom or chosen.get('value')}",
@@ -452,13 +816,123 @@ def _select_dimension_by_prefs(
             timeout_ms=5_000,
             attempts=4,
         )
+        wall_ms = (time.perf_counter() - t0) * 1000
         picked = autom or chosen.get("value") or "?"
-        log(f"Selected {dimension_name}: {picked} ({(chosen.get('label') or '')[:40]})")
+        log(
+            f"Selected {dimension_name}: {picked} "
+            f"({(chosen.get('label') or '')[:40]}) "
+            f"wait_opts={wait_opts_ms:.0f}ms click={sel_ms:.0f}ms "
+            f"wall={wall_ms:.0f}ms"
+        )
         if timer and mark:
-            timer.mark(mark)
+            timer.record(mark, wall_ms, kind="click")
         return str(picked)
     raise RuntimeError(
         f"Dimension {dimension_name} never became selectable; last={last_opts!r}"
+    )
+
+
+def _configure_unlocked(page) -> bool:
+    """True when size/color/storage radios exist and at least one is enabled."""
+    try:
+        if _is_apple_404(page):
+            return False
+        return bool(
+            page.evaluate(
+                """() => {
+                  const dims = Array.from(
+                    document.querySelectorAll(
+                      'input[type="radio"][name="dimensionColor"],'
+                      + 'input[type="radio"][name="dimensionScreensize"],'
+                      + 'input[type="radio"][name="dimensionCapacity"]'
+                    )
+                  );
+                  if (!dims.length) return false;
+                  return dims.some((el) => !el.disabled);
+                }"""
+            )
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _list_hub_buy_links(page) -> list[dict]:
+    """Unique product family links from /shop/buy-iphone hub."""
+    try:
+        return (
+            page.evaluate(
+                """() => {
+                  const out = [];
+                  const seen = new Set();
+                  for (const a of document.querySelectorAll('a[href*="/shop/buy-iphone/"]')) {
+                    const href = a.href || '';
+                    if (!href || seen.has(href)) continue;
+                    // Skip the hub itself
+                    const path = (new URL(href)).pathname.replace(/\\/+$/, '');
+                    if (path.endsWith('/buy-iphone')) continue;
+                    const text = (a.innerText || a.textContent || '')
+                      .replace(/\\s+/g, ' ').trim();
+                    if (!text) continue;
+                    seen.add(href);
+                    out.push({ href, text: text.slice(0, 120) });
+                  }
+                  return out;
+                }"""
+            )
+            or []
+        )
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _hub_link_matches(link: dict, family_match: list[str]) -> bool:
+    """All match tokens must appear in href or text (case-insensitive)."""
+    tokens = [str(t).strip().lower() for t in family_match if str(t).strip()]
+    if not tokens:
+        return False
+    hay = f"{link.get('href') or ''} {link.get('text') or ''}".lower()
+    return all(tok in hay for tok in tokens)
+
+
+def _wait_user_family_page(
+    page,
+    *,
+    timeout_sec: float = 45.0,
+    poll_ms: int = 100,
+) -> str:
+    """
+    User opens/clicks the real family buy page in Chrome.
+    Continues as soon as configure radios unlock (soft-404 ignored).
+    """
+    log(
+        f"USER PICK  open/click the iPhone family page in Chrome NOW "
+        f"(poll={poll_ms}ms, timeout={timeout_sec:.0f}s)"
+    )
+    beep()
+    notify_macos(
+        "Assist — pick iPhone page",
+        "Guessed URLs failed. Click the right iPhone on the hub (or open its buy URL).",
+    )
+    t0 = time.perf_counter()
+    deadline = t0 + max(5.0, timeout_sec)
+    last_log = 0.0
+    while time.perf_counter() < deadline:
+        if _configure_unlocked(page):
+            ms = (time.perf_counter() - t0) * 1000
+            log(f"USER PICK  family configure ready in {ms:.0f}ms → {page.url}")
+            return page.url
+        now = time.perf_counter()
+        if now - last_log >= 2.0:
+            log(
+                f"USER PICK  waiting for family page… "
+                f"{(now - t0):.1f}s / {timeout_sec:.0f}s "
+                f"(url={page.url[:90]})"
+            )
+            last_log = now
+        page.wait_for_timeout(poll_ms)
+    raise RuntimeError(
+        f"Timed out waiting for you to open a live buy-iphone configure page "
+        f"({timeout_sec:.0f}s). Last url={page.url}"
     )
 
 
@@ -468,54 +942,146 @@ def wait_family_configure_ready(
     *,
     timer: StageTimer | None = None,
     poll_ms: int = 400,
-    timeout_sec: int = 180,
+    timeout_sec: int = 20,
+    hub_url: str = "https://www.apple.com/vn/shop/buy-iphone/",
+    family_match: list[str] | None = None,
+    user_pick_timeout_sec: float = 45.0,
 ) -> str:
     """
-    Poll family buy URL(s) until dimension radios unlock (launch / configure ready).
-    Returns the URL that became ready.
+    Resolve a live configure page:
+      A) Poll guessed family_urls (soft-404 = dead slug, short budget)
+      B) Open buy-iphone hub, auto-open unique family_match link
+      C) wait_user: you click the phone tile / open the right URL
+    Returns the URL that became configure-ready.
     """
-    urls = [u for u in family_urls if u]
-    if not urls:
-        raise RuntimeError("No family_url candidates to poll")
-    deadline = time.perf_counter() + timeout_sec
-    log(f"Polling configure unlock ({len(urls)} URL(s), up to {timeout_sec}s)…")
-    idx = 0
-    while time.perf_counter() < deadline:
-        url = urls[idx % len(urls)]
-        idx += 1
-        try:
-            if urlparse(page.url).path.rstrip("/") != urlparse(url).path.rstrip("/"):
-                goto_resilient(page, url)
-            else:
-                page.reload(wait_until="domcontentloaded", timeout=30_000)
-        except Exception as exc:  # noqa: BLE001
-            log(f"Poll nav issue: {exc}")
-            page.wait_for_timeout(poll_ms)
-            continue
-        if _is_apple_404(page):
-            page.wait_for_timeout(poll_ms)
-            continue
-        ready = page.evaluate(
-            """() => {
-              const dims = Array.from(
-                document.querySelectorAll(
-                  'input[type="radio"][name="dimensionColor"],'
-                  + 'input[type="radio"][name="dimensionScreensize"],'
-                  + 'input[type="radio"][name="dimensionCapacity"]'
-                )
-              );
-              if (!dims.length) return false;
-              return dims.some((el) => !el.disabled);
-            }"""
+    urls = []
+    seen = set()
+    for u in family_urls:
+        if u and u not in seen:
+            urls.append(u)
+            seen.add(u)
+    if not urls and not hub_url:
+        raise RuntimeError("No family_url / hub_url candidates")
+
+    t_all = time.perf_counter()
+    match_tokens = [str(x) for x in (family_match or []) if str(x).strip()]
+
+    # ----- Phase A: guessed URLs -----
+    if urls:
+        deadline_a = time.perf_counter() + max(5, int(timeout_sec))
+        log(
+            f"FAMILY A  poll guessed URLs ({len(urls)}), "
+            f"up to {timeout_sec}s (soft-404 = skip)…"
         )
-        if ready:
-            log(f"Configure unlocked: {page.url}")
-            if timer:
-                timer.mark("0a configure unlocked")
-            notify_macos("Assist — configure unlocked", page.url[:80])
-            return page.url
-        page.wait_for_timeout(poll_ms)
-    raise RuntimeError(f"Configure did not unlock within {timeout_sec}s (tried {urls})")
+        dead_404: set[str] = set()
+        idx = 0
+        while time.perf_counter() < deadline_a:
+            alive = [u for u in urls if u not in dead_404]
+            if not alive:
+                log("FAMILY A  all guessed URLs are soft-404 — skipping to hub")
+                break
+            url = alive[idx % len(alive)]
+            idx += 1
+            t_round = time.perf_counter()
+            try:
+                if urlparse(page.url).path.rstrip("/") != urlparse(url).path.rstrip("/"):
+                    goto_resilient(page, url)
+                else:
+                    page.reload(wait_until="domcontentloaded", timeout=30_000)
+            except Exception as exc:  # noqa: BLE001
+                log(f"FAMILY A  nav issue: {exc}")
+                page.wait_for_timeout(poll_ms)
+                continue
+            if _is_apple_404(page):
+                dead_404.add(url)
+                log(
+                    f"FAMILY A  soft-404 ({(time.perf_counter() - t_round) * 1000:.0f}ms): "
+                    f"{url}"
+                )
+                page.wait_for_timeout(min(poll_ms, 200))
+                continue
+            if _configure_unlocked(page):
+                elapsed = (time.perf_counter() - t_all) * 1000
+                log(f"FAMILY A  configure unlocked ({elapsed:.0f}ms): {page.url}")
+                if timer:
+                    timer.since(t_all, "0a configure unlocked (guessed URL)", kind="poll")
+                notify_macos("Assist — configure unlocked", page.url[:80])
+                return page.url
+            log(
+                f"FAMILY A  page live but configure not ready yet "
+                f"({(time.perf_counter() - t_round) * 1000:.0f}ms) {page.url[:90]}"
+            )
+            page.wait_for_timeout(poll_ms)
+        log(
+            f"FAMILY A  done without unlock "
+            f"({(time.perf_counter() - t_all) * 1000:.0f}ms) → hub"
+        )
+
+    # ----- Phase B: hub scrape -----
+    hub = (hub_url or "https://www.apple.com/vn/shop/buy-iphone/").strip()
+    if hub:
+        log(f"FAMILY B  opening hub: {hub}")
+        try:
+            goto_resilient(page, hub)
+        except Exception as exc:  # noqa: BLE001
+            log(f"FAMILY B  hub nav failed: {exc}")
+        page.wait_for_timeout(300)
+        links = _list_hub_buy_links(page)
+        log(
+            "FAMILY B  hub cards: "
+            + (
+                ", ".join(f"{x.get('text')!r}" for x in links[:12])
+                if links
+                else "(none)"
+            )
+        )
+        matched = [x for x in links if _hub_link_matches(x, match_tokens)]
+        if match_tokens:
+            log(
+                f"FAMILY B  match tokens={match_tokens!r} → "
+                f"{len(matched)} hit(s): "
+                + ", ".join(f"{x.get('text')!r}" for x in matched[:6])
+            )
+        if len(matched) == 1:
+            target = matched[0]["href"]
+            log(f"FAMILY B  unique match — opening {target}")
+            goto_resilient(page, target)
+            # Brief wait for configure (page may need a beat)
+            t_b = time.perf_counter()
+            while time.perf_counter() - t_b < 8.0:
+                if _configure_unlocked(page):
+                    elapsed = (time.perf_counter() - t_all) * 1000
+                    log(f"FAMILY B  configure unlocked ({elapsed:.0f}ms): {page.url}")
+                    if timer:
+                        timer.since(t_all, "0a configure unlocked (hub)", kind="poll")
+                    notify_macos("Assist — configure unlocked", page.url[:80])
+                    return page.url
+                page.wait_for_timeout(150)
+            log("FAMILY B  opened match but configure not ready — USER PICK")
+        elif len(matched) > 1:
+            log("FAMILY B  multiple matches — USER PICK (won't guess)")
+        else:
+            log("FAMILY B  no match — USER PICK on hub")
+
+        # Scroll hub into a useful spot
+        try:
+            page.evaluate(
+                """() => {
+                  const a = document.querySelector('a[href*="/shop/buy-iphone/iphone"]');
+                  if (a) a.scrollIntoView({ block: 'center', behavior: 'auto' });
+                }"""
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    # ----- Phase C: user clicks -----
+    ready_url = _wait_user_family_page(
+        page, timeout_sec=user_pick_timeout_sec, poll_ms=100
+    )
+    if timer:
+        timer.since(t_all, "0a configure unlocked (user)", kind="poll")
+    notify_macos("Assist — configure unlocked", ready_url[:80])
+    return ready_url
 
 
 def select_product_dimensions(
@@ -532,18 +1098,44 @@ def select_product_dimensions(
     screensizes = [str(x) for x in (prefs.get("screensizes") or prefs.get("sizes") or [])]
     colors = [str(x) for x in (prefs.get("colors") or [])]
     storages = [str(x) for x in (prefs.get("storages") or prefs.get("capacities") or [])]
+    allow_failover = bool(prefs.get("allow_failover"))
+    on_miss = str(prefs.get("on_miss") or "wait_user")
+    user_pick_timeout_sec = float(prefs.get("user_pick_timeout_sec") or 20)
     if not colors and not storages and not screensizes:
         raise RuntimeError("product_prefs needs colors and/or storages (and sizes for Pro)")
 
+    # Always dump live VN labels/slugs — critical on launch day for unknown names
     size_opts = _list_dimension_options(page, "dimensionScreensize")
+    color_opts = _list_dimension_options(page, "dimensionColor")
+    cap_opts = _list_dimension_options(page, "dimensionCapacity")
     if size_opts:
+        log(f"LIVE screensizes: [{_format_dimension_options(size_opts)}]")
+    if color_opts:
+        log(f"LIVE colors: [{_format_dimension_options(color_opts)}]")
+    if cap_opts:
+        log(f"LIVE storages: [{_format_dimension_options(cap_opts)}]")
+
+    dim_kwargs = dict(
+        timer=timer,
+        allow_failover=allow_failover,
+        on_miss=on_miss,
+        user_pick_timeout_sec=user_pick_timeout_sec,
+    )
+
+    if size_opts:
+        t_size = time.perf_counter()
         _select_dimension_by_prefs(
             page,
             "dimensionScreensize",
             screensizes or ["6.3", "6,3", "6_3"],
-            timer=timer,
             mark="0d screensize",
+            **dim_kwargs,
         )
+        log(
+            f"CLICK  screensize select wall: "
+            f"{(time.perf_counter() - t_size) * 1000:.0f}ms"
+        )
+        t_wait = time.perf_counter()
         page.wait_for_function(
             """() => {
               const els = document.querySelectorAll('input[name="dimensionColor"]');
@@ -551,15 +1143,25 @@ def select_product_dimensions(
             }""",
             timeout=10_000,
         )
+        wait_ms = (time.perf_counter() - t_wait) * 1000
+        log(f"WAIT  color options after screensize: {wait_ms:.0f}ms")
+        if timer:
+            timer.record("0d2 wait color unlock", wait_ms, kind="wait")
 
     if colors or _list_dimension_options(page, "dimensionColor"):
+        t_color = time.perf_counter()
         _select_dimension_by_prefs(
             page,
             "dimensionColor",
             colors or ["black", "Đen"],
-            timer=timer,
             mark="0e color",
+            **dim_kwargs,
         )
+        log(
+            f"CLICK  color select wall: "
+            f"{(time.perf_counter() - t_color) * 1000:.0f}ms"
+        )
+        t_wait = time.perf_counter()
         page.wait_for_function(
             """() => {
               const els = document.querySelectorAll('input[name="dimensionCapacity"]');
@@ -567,16 +1169,26 @@ def select_product_dimensions(
             }""",
             timeout=10_000,
         )
+        wait_ms = (time.perf_counter() - t_wait) * 1000
+        log(f"WAIT  capacity options after color: {wait_ms:.0f}ms")
+        if timer:
+            timer.record("0e2 wait capacity unlock", wait_ms, kind="wait")
 
     if storages or _list_dimension_options(page, "dimensionCapacity"):
+        t_cap = time.perf_counter()
         _select_dimension_by_prefs(
             page,
             "dimensionCapacity",
             storages or ["256gb", "256"],
-            timer=timer,
             mark="0f capacity",
+            **dim_kwargs,
+        )
+        log(
+            f"CLICK  capacity select wall: "
+            f"{(time.perf_counter() - t_cap) * 1000:.0f}ms"
         )
 
+    t_trade = time.perf_counter()
     page.wait_for_function(
         """() => {
           const t = document.querySelector(
@@ -584,11 +1196,12 @@ def select_product_dimensions(
           );
           return !!(t && !t.disabled);
         }""",
-        timeout=12_000,
+        timeout=25_000,
     )
-    log(f"Dimensions done — trade-in ready at {page.url}")
+    wait_ms = (time.perf_counter() - t_trade) * 1000
+    log(f"WAIT  trade-in ready after dimensions: {wait_ms:.0f}ms — {page.url}")
     if timer:
-        timer.mark("0g dimensions complete (trade-in ready)")
+        timer.record("0g dimensions complete (trade-in ready)", wait_ms, kind="wait")
 
 
 def open_product_page(page, product_url: str) -> None:
@@ -619,22 +1232,38 @@ def open_product_page(page, product_url: str) -> None:
         raise RuntimeError(f"Apple product page 404: {product_url}")
 
 
-def goto_resilient(page, url: str, attempts: int = 3) -> None:
-    """Apple sometimes aborts the first navigation right after login redirects."""
+def goto_resilient(page, url: str, attempts: int = 3) -> float:
+    """Apple sometimes aborts the first navigation right after login redirects.
+
+    Returns elapsed ms for the successful (or usable-abort) navigation.
+    """
     last_exc: Exception | None = None
+    t0 = time.perf_counter()
     for i in range(1, attempts + 1):
+        t_attempt = time.perf_counter()
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-            return
+            ms = (time.perf_counter() - t0) * 1000
+            log(
+                f"NAV  goto ok attempt {i}/{attempts}: "
+                f"{(time.perf_counter() - t_attempt) * 1000:.0f}ms "
+                f"(total nav {ms:.0f}ms) → {page.url[:100]}"
+            )
+            return ms
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
             msg = str(exc)
-            log(f"Navigation attempt {i}/{attempts} failed: {msg.splitlines()[0][:160]}")
+            log(
+                f"NAV  attempt {i}/{attempts} failed "
+                f"({(time.perf_counter() - t_attempt) * 1000:.0f}ms): "
+                f"{msg.splitlines()[0][:160]}"
+            )
             # If the abort still landed us on (or near) the target, continue.
             current = page.url
             if "buy-iphone" in current or urlparse(current).path.rstrip("/") == urlparse(url).path.rstrip("/"):
-                log(f"Already on a usable page after abort: {current}")
-                return
+                ms = (time.perf_counter() - t0) * 1000
+                log(f"NAV  usable page after abort ({ms:.0f}ms): {current}")
+                return ms
             page.wait_for_timeout(1500)
     assert last_exc is not None
     raise last_exc
@@ -652,15 +1281,18 @@ def _radio_is_checked(page, input_selector: str) -> bool:
     )
 
 
-def _click_radio_strategies(page, input_selector: str, *, text_hints: list[str] | None = None) -> str:
+def _click_radio_strategies(page, input_selector: str, *, text_hints: list[str] | None = None) -> tuple[str, float]:
     """
     Try several real-UI click strategies (never fake .checked).
-    Returns which strategy was attempted last.
+    Returns (strategy_used, click_wall_ms).
     """
+    t0 = time.perf_counter()
     page.locator(input_selector).first.wait_for(state="attached", timeout=5_000)
+    attach_ms = (time.perf_counter() - t0) * 1000
     hints = text_hints or []
 
     # 1) Associated label / form-selector click (in-page — beats sticky intercept)
+    t_click = time.perf_counter()
     via = page.evaluate(
         """(selector) => {
           const el = document.querySelector(selector);
@@ -678,8 +1310,14 @@ def _click_radio_strategies(page, input_selector: str, *, text_hints: list[str] 
         }""",
         input_selector,
     )
+    click1_ms = (time.perf_counter() - t_click) * 1000
     if _radio_is_checked(page, input_selector):
-        return via
+        total = (time.perf_counter() - t0) * 1000
+        log(
+            f"CLICK  radio {via}: attach={attach_ms:.0f}ms click={click1_ms:.0f}ms "
+            f"total={total:.0f}ms"
+        )
+        return via, total
 
     # 2) Visible Vietnamese/English text on page (AppleCare often needs this)
     for hint in hints:
@@ -687,21 +1325,32 @@ def _click_radio_strategies(page, input_selector: str, *, text_hints: list[str] 
             loc = page.get_by_text(hint, exact=False)
             if loc.count() == 0:
                 continue
+            t_hint = time.perf_counter()
             target = loc.first
             target.scroll_into_view_if_needed(timeout=800)
             target.click(force=True, timeout=1_200, no_wait_after=True)
+            hint_ms = (time.perf_counter() - t_hint) * 1000
             if _radio_is_checked(page, input_selector):
-                return f"text:{hint}"
+                total = (time.perf_counter() - t0) * 1000
+                log(
+                    f"CLICK  radio text:{hint!r}: click={hint_ms:.0f}ms "
+                    f"total={total:.0f}ms"
+                )
+                return f"text:{hint}", total
         except Exception:  # noqa: BLE001
             continue
 
     # 3) Playwright force-click on the input itself
     try:
+        t_pw = time.perf_counter()
         page.locator(input_selector).first.click(
             force=True, timeout=1_200, no_wait_after=True
         )
+        pw_ms = (time.perf_counter() - t_pw) * 1000
         if _radio_is_checked(page, input_selector):
-            return "pw-force-input"
+            total = (time.perf_counter() - t0) * 1000
+            log(f"CLICK  radio pw-force-input: click={pw_ms:.0f}ms total={total:.0f}ms")
+            return "pw-force-input", total
     except Exception:  # noqa: BLE001
         pass
 
@@ -709,15 +1358,24 @@ def _click_radio_strategies(page, input_selector: str, *, text_hints: list[str] 
     try:
         input_id = page.locator(input_selector).first.get_attribute("id")
         if input_id:
+            t_lbl = time.perf_counter()
             page.locator(f'label[for="{input_id}"]').first.click(
                 force=True, timeout=1_200, no_wait_after=True
             )
+            lbl_ms = (time.perf_counter() - t_lbl) * 1000
             if _radio_is_checked(page, input_selector):
-                return "pw-force-label"
+                total = (time.perf_counter() - t0) * 1000
+                log(
+                    f"CLICK  radio pw-force-label: click={lbl_ms:.0f}ms "
+                    f"total={total:.0f}ms"
+                )
+                return "pw-force-label", total
     except Exception:  # noqa: BLE001
         pass
 
-    return via or "failed"
+    total = (time.perf_counter() - t0) * 1000
+    log(f"CLICK  radio strategies exhausted ({total:.0f}ms) last={via}")
+    return via or "failed", total
 
 
 def _select_radio_until_checked(
@@ -737,10 +1395,14 @@ def _select_radio_until_checked(
         if time.perf_counter() >= deadline:
             break
         if _radio_is_checked(page, input_selector):
-            log(f"{label}: already checked (attempt {i + 1})")
-            return (time.perf_counter() - t0) * 1000
-        last_via = _click_radio_strategies(page, input_selector, text_hints=text_hints)
+            ms = (time.perf_counter() - t0) * 1000
+            log(f"CLICK  {label}: already checked (attempt {i + 1}, {ms:.0f}ms)")
+            return ms
+        last_via, click_ms = _click_radio_strategies(
+            page, input_selector, text_hints=text_hints
+        )
         # Short poll for React to commit checked state
+        t_verify = time.perf_counter()
         try:
             page.wait_for_function(
                 """(selector) => {
@@ -750,9 +1412,19 @@ def _select_radio_until_checked(
                 arg=input_selector,
                 timeout=min(900, max(200, int((deadline - time.perf_counter()) * 1000))),
             )
-            log(f"{label}: checked via {last_via} (attempt {i + 1})")
-            return (time.perf_counter() - t0) * 1000
+            verify_ms = (time.perf_counter() - t_verify) * 1000
+            ms = (time.perf_counter() - t0) * 1000
+            log(
+                f"CLICK  {label}: OK via={last_via} attempt={i + 1} "
+                f"click={click_ms:.0f}ms verify={verify_ms:.0f}ms total={ms:.0f}ms"
+            )
+            return ms
         except Exception:  # noqa: BLE001
+            verify_ms = (time.perf_counter() - t_verify) * 1000
+            log(
+                f"CLICK  {label}: not committed yet via={last_via} "
+                f"attempt={i + 1} click={click_ms:.0f}ms verify_wait={verify_ms:.0f}ms"
+            )
             page.wait_for_timeout(80)
             continue
     raise RuntimeError(
@@ -790,8 +1462,7 @@ def select_declines(
         })"""
     )
     prefind_ms = (time.perf_counter() - t0) * 1000
-    timer.marks.append(("0 prefind handles", prefind_ms))
-    timer._last = time.perf_counter()
+    timer.record("0 prefind handles", prefind_ms)
     log(
         f"Prefind: trade={'Y' if pref.get('trade') else 'N'} "
         f"applecare={'Y' if pref.get('care') else 'N'} "
@@ -807,8 +1478,7 @@ def select_declines(
         timeout_ms=6_000,
         attempts=5,
     )
-    timer.marks.append(("1 no trade-in (verify)", trade_ms))
-    timer._last = time.perf_counter()
+    timer.record("1 no trade-in (verify)", trade_ms, kind="click")
 
     # ========== 2) Wait AppleCare mount ==========
     t = time.perf_counter()
@@ -828,8 +1498,7 @@ def select_declines(
     except Exception:  # noqa: BLE001
         page.wait_for_timeout(150)
     care_mount_ms = (time.perf_counter() - t) * 1000
-    timer.marks.append(("2 wait AppleCare mount", care_mount_ms))
-    timer._last = time.perf_counter()
+    timer.record("2 wait AppleCare mount", care_mount_ms, kind="wait")
 
     # ========== 3) NO APPLECARE → verify with retries ==========
     care_ms = _select_radio_until_checked(
@@ -865,8 +1534,7 @@ def select_declines(
             timeout_ms=4_000,
             attempts=3,
         )
-    timer.marks.append(("3 no AppleCare (verify)", care_ms))
-    timer._last = time.perf_counter()
+    timer.record("3 no AppleCare (verify)", care_ms, kind="click")
 
     # ========== 4) Re-verify BOTH + wait until add is actually usable ==========
     t = time.perf_counter()
@@ -896,16 +1564,14 @@ def select_declines(
         timeout=3_000,
     )
     add_ready_ms = (time.perf_counter() - t) * 1000
-    timer.marks.append(("4 wait add ready (both verified)", add_ready_ms))
-    timer._last = time.perf_counter()
+    timer.record("4 wait add ready (both verified)", add_ready_ms, kind="wait")
     log("Verified before add: trade=Y applecare=Y both=Y")
 
     # Brief settle: Apple enables add before purchase-option AJAX finishes.
     t = time.perf_counter()
     page.wait_for_timeout(50)
     settle_ms = (time.perf_counter() - t) * 1000
-    timer.marks.append(("4b settle after verify", settle_ms))
-    timer._last = time.perf_counter()
+    timer.record("4b settle after verify", settle_ms, kind="wait")
 
     # Re-verify selections survived the settle (React remounts can clear them)
     still = page.evaluate(
@@ -945,8 +1611,7 @@ def select_declines(
         }"""
     )
     add_click_ms = (time.perf_counter() - t) * 1000
-    timer.marks.append(("5 click add-to-cart", add_click_ms))
-    timer._last = time.perf_counter()
+    timer.record("5 click add-to-cart", add_click_ms, kind="click")
     if not clicked or not clicked.get("ok"):
         raise RuntimeError(f"Add click failed after verify: {clicked}")
     log(
@@ -976,10 +1641,7 @@ def select_declines(
         attach_ok = False
 
     if "/shop/404" in page.url.lower() or page.url.rstrip("/").endswith("/404"):
-        timer.marks.append(
-            ("6 add → 404 (blocked/bad session)", (time.perf_counter() - t_attach) * 1000)
-        )
-        timer._last = time.perf_counter()
+        timer.since(t_attach, "6 add → 404 (blocked/bad session)", kind="wait")
         raise RuntimeError(
             f"Add-to-cart hit Apple 404 (likely session/bot block): {page.url}"
         )
@@ -1015,6 +1677,7 @@ def select_declines(
                     timeout_ms=3_000,
                     attempts=3,
                 )
+            t_reclick = time.perf_counter()
             page.evaluate(
                 """() => {
                   const btn = Array.from(
@@ -1029,30 +1692,36 @@ def select_declines(
                   return !!btn;
                 }"""
             )
+            log(
+                f"CLICK  add-to-cart retry: "
+                f"{(time.perf_counter() - t_reclick) * 1000:.0f}ms"
+            )
+            t_wait_retry = time.perf_counter()
             page.wait_for_url(
                 re.compile(r".*(step=attach|/shop/bag).*", re.I),
                 timeout=6_000,
             )
+            log(
+                f"WAIT  add-retry → attach/bag: "
+                f"{(time.perf_counter() - t_wait_retry) * 1000:.0f}ms → {page.url[:100]}"
+            )
             attach_ok = True
         except Exception as exc:  # noqa: BLE001
             log(f"Retry add failed: {exc}")
-        timer.marks.append(
-            ("5b retry add → attach", (time.perf_counter() - t_retry) * 1000)
-        )
-        timer._last = time.perf_counter()
+        timer.since(t_retry, "5b retry add → attach", kind="wait")
 
     if attach_ok:
         if "/shop/404" in page.url.lower():
             raise RuntimeError(f"Landed on 404 after add: {page.url}")
         first_leg = (time.perf_counter() - t_attach) * 1000
-        # If we already recorded retry, mark 6 as confirmation only
-        timer.mark("6 attach/bag confirmed after add")
+        timer.record(
+            "6 wait attach/bag after add",
+            first_leg,
+            kind="wait",
+        )
         log(f"Verified after add ({first_leg:.0f}ms since first add click): {page.url}")
     else:
-        timer.marks.append(
-            ("6 attach page (miss → bag fallback)", (time.perf_counter() - t_attach) * 1000)
-        )
-        timer._last = time.perf_counter()
+        timer.since(t_attach, "6 attach page (miss → bag fallback)", kind="wait")
         log(f"No attach after verify+retry — bag URL fallback (was {page.url})")
 
 def click_xem_gio_hang_now(page, timer: StageTimer | None = None) -> None:
@@ -1065,29 +1734,38 @@ def click_xem_gio_hang_now(page, timer: StageTimer | None = None) -> None:
     t0 = time.perf_counter()
 
     if "/shop/bag" in page.url.lower():
-        timer.mark("7 already on bag")
+        timer.mark("7 already on bag", kind="nav")
         return
 
     # Direct bag URL from attach — skip proceed hop
-    goto_resilient(page, "https://www.apple.com/vn/shop/bag")
-    timer.mark("7 bag page (direct)")
+    nav_ms = goto_resilient(page, "https://www.apple.com/vn/shop/bag")
+    timer.record("7 bag page (direct)", nav_ms, kind="nav")
     log(f"At bag ({(time.perf_counter() - t0) * 1000:.0f}ms): {page.url}")
 
 
 def click_thanh_toan_now(page, timer: StageTimer | None = None) -> None:
     """From bag, enter checkout form. Never place the order."""
     timer = timer or StageTimer()
+    t_ready = time.perf_counter()
     checkout = page.locator('[data-autom="checkout"]')
     checkout.first.wait_for(state="attached", timeout=5_000)
+    log(
+        f"WAIT  checkout button attached: "
+        f"{(time.perf_counter() - t_ready) * 1000:.0f}ms"
+    )
     for attempt in range(3):
+        t_click = time.perf_counter()
         page.evaluate(
             """() => {
               const btn = document.querySelector('[data-autom="checkout"]');
               if (btn) btn.click();
             }"""
         )
+        click_ms = (time.perf_counter() - t_click) * 1000
+        log(f"CLICK  Thanh Toán / checkout attempt {attempt + 1}: {click_ms:.0f}ms")
         if attempt == 0:
-            timer.mark("9 click Thanh Toán")
+            timer.record("9 click Thanh Toán", click_ms, kind="click")
+        t_wait = time.perf_counter()
         try:
             page.wait_for_url(
                 re.compile(
@@ -1098,6 +1776,10 @@ def click_thanh_toan_now(page, timer: StageTimer | None = None) -> None:
             )
         except Exception:  # noqa: BLE001
             pass
+        wait_ms = (time.perf_counter() - t_wait) * 1000
+        log(
+            f"WAIT  after Thanh Toán click: {wait_ms:.0f}ms → {page.url[:100]}"
+        )
         if _is_apple_404(page):
             log(f"Thanh Toán hit Apple 404 (attempt {attempt + 1}) — retry from bag")
             goto_resilient(page, "https://www.apple.com/vn/shop/bag")
@@ -1106,15 +1788,14 @@ def click_thanh_toan_now(page, timer: StageTimer | None = None) -> None:
             )
             continue
         break
-    timer.mark("10 checkout-ready page")
+    timer.mark("10 checkout-ready page", kind="wait")
     log(f"Checkout-ready at: {page.url}")
     if _is_apple_404(page):
         raise RuntimeError(f"Thanh Toán landed on Apple 404: {page.url}")
 
 
-# Hard stop — never click these (purchase / review commit)
+# Hard stop — NEVER click place-order / Đặt hàng (review button is allowed)
 _CHECKOUT_FORBIDDEN_AUTOM = {
-    "continue-button-review",  # "Xem Lại Đơn Hàng" — past payment stop point
     "placeOrder",
     "place-order",
     "place_order",
@@ -1164,15 +1845,816 @@ def _is_forbidden_checkout_autom(autom: str) -> bool:
     a = autom or ""
     if a in _CHECKOUT_FORBIDDEN_AUTOM:
         return True
-    return bool(re.search(r"placeorder|place-order|place_order", a, re.I))
+    # Never allow place-order variants (EN/VN automs)
+    return bool(
+        re.search(r"placeorder|place-order|place_order|dat.?hang|đặt.?hàng", a, re.I)
+    )
 
 
-def _click_autom(page, autom: str, *, timeout_ms: int = 8_000) -> None:
+def _billing_popup(page):
+    """Locator for the Chỉnh Sửa Địa Chỉ overlay (focus here, not background)."""
+    # Prefer aria dialog; fall back to Apple's rc-overlay-popup shell.
+    dlg = page.locator('[role="dialog"][aria-modal="true"]').filter(
+        has=page.locator('[data-autom="address-savebutton"]')
+    )
+    if dlg.count() > 0:
+        return dlg.first
+    return page.locator(".rc-overlay-popup").filter(
+        has=page.locator('[data-autom="address-savebutton"]')
+    ).first
+
+
+def _billing_address_editor_open(page) -> bool:
+    """True when the Chỉnh Sửa Địa Chỉ popup is visible."""
+    try:
+        return bool(
+            page.evaluate(
+                """() => {
+                  const dlg = document.querySelector(
+                    '[role="dialog"][aria-modal="true"], .rc-overlay-popup'
+                  );
+                  if (!dlg) return false;
+                  const vis = !!(dlg.offsetParent || dlg.getClientRects().length);
+                  if (!vis) return false;
+                  return !!dlg.querySelector(
+                    '[data-autom="address-savebutton"], '
+                    + 'select[id*="editSavedBillingAddress"]'
+                  );
+                }"""
+            )
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _open_billing_address_edit(page) -> None:
+    """Click Chỉnh sửa and wait for the Chỉnh Sửa Địa Chỉ popup."""
+    if _billing_address_editor_open(page):
+        log("Billing address popup already open (Chỉnh Sửa Địa Chỉ)")
+        return
+    selectors = [
+        'button[id*="editBillingAddress"]',
+        "button.rf-creditcard-editaddress",
+        'button:has-text("Chỉnh sửa")',
+        'button:has-text("Edit")',
+    ]
+    last_err: Exception | None = None
+    for attempt in range(1, 4):
+        if _billing_address_editor_open(page):
+            return
+        try:
+            page.wait_for_function(
+                """() => {
+                  const el = document.querySelector(
+                    'button[id*="editBillingAddress"], button.rf-creditcard-editaddress'
+                  );
+                  if (!el || el.disabled) return false;
+                  return !!(el.offsetParent || el.getClientRects().length);
+                }""",
+                timeout=8_000,
+            )
+        except Exception as wait_exc:  # noqa: BLE001
+            last_err = wait_exc
+            log(f"WAIT  billing edit button attempt {attempt}: {wait_exc}")
+        clicked = ""
+        for sel in selectors:
+            try:
+                loc = page.locator(sel).first
+                if loc.count() == 0:
+                    continue
+                loc.scroll_into_view_if_needed(timeout=2_000)
+                loc.click(timeout=3_000)
+                clicked = sel
+                break
+            except Exception as click_exc:  # noqa: BLE001
+                last_err = click_exc
+                continue
+        if not clicked:
+            clicked = page.evaluate(
+                """() => {
+                  const byId = document.querySelector(
+                    'button[id*="editBillingAddress"], button.rf-creditcard-editaddress'
+                  );
+                  if (byId) { byId.click(); return 'dom-id'; }
+                  const buttons = Array.from(document.querySelectorAll('button'));
+                  const edit = buttons.find((b) => {
+                    const t = (b.innerText || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                    return t === 'chỉnh sửa' || t === 'edit';
+                  });
+                  if (edit) { edit.click(); return 'dom-text'; }
+                  return '';
+                }"""
+            )
+        if not clicked:
+            time.sleep(0.35 * attempt)
+            continue
+        log(f"CLICK  billing Chỉnh sửa via={clicked} attempt={attempt}")
+        try:
+            # Wait for the POPUP (not background form scraps)
+            page.wait_for_function(
+                """() => {
+                  const dlg = document.querySelector(
+                    '[role="dialog"][aria-modal="true"], .rc-overlay-popup'
+                  );
+                  if (!dlg) return false;
+                  const vis = !!(dlg.offsetParent || dlg.getClientRects().length);
+                  if (!vis) return false;
+                  const title = (dlg.innerText || '').toLowerCase();
+                  const titled = title.includes('chỉnh sửa địa chỉ')
+                    || title.includes('edit address')
+                    || !!dlg.querySelector('#rf-creditcard-addressoverlay-subheader');
+                  return titled && !!dlg.querySelector(
+                    '[data-autom="address-savebutton"], select[data-autom="form-field-state"]'
+                  );
+                }""",
+                timeout=20_000,
+            )
+            log("WAIT  Chỉnh Sửa Địa Chỉ popup open")
+            return
+        except Exception as open_exc:  # noqa: BLE001
+            last_err = open_exc
+            log(f"WAIT  billing popup mount failed attempt {attempt}: {open_exc}")
+            time.sleep(0.35 * attempt)
+    detail = f" ({last_err})" if last_err else ""
+    raise RuntimeError(
+        f"Could not open billing address popup (Chỉnh Sửa Địa Chỉ){detail}"
+    )
+
+
+def _clear_input_autom(page, autom: str) -> None:
+    """Clear a text input (needed for bad postal codes on saved billing)."""
+    page.evaluate(
+        """(autom) => {
+          const nodes = Array.from(
+            document.querySelectorAll('[data-autom="' + autom + '"]')
+          ).filter((el) => el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
+          for (const el of nodes) {
+            const visible = !!(el.offsetParent || el.getClientRects().length);
+            if (!visible && nodes.length > 1) continue;
+            const proto = window.HTMLInputElement.prototype;
+            const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+            if (desc && desc.set) desc.set.call(el, '');
+            else el.value = '';
+            const tracker = el._valueTracker;
+            if (tracker && typeof tracker.setValue === 'function') tracker.setValue('x');
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        }""",
+        autom,
+    )
+    try:
+        page.locator(f'input[data-autom="{autom}"]').first.fill("", timeout=1_200)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _billing_select(page, autom: str):
+    """Select inside the Chỉnh Sửa Địa Chỉ popup only."""
+    popup = _billing_popup(page)
+    return popup.locator(f'select[data-autom="{autom}"]').first
+
+
+def _fill_billing_input(page, autom: str, value: str) -> None:
+    """Fill an input inside the billing address popup (fast path)."""
+    loc = _billing_popup(page).locator(f'input[data-autom="{autom}"]').first
+    loc.wait_for(state="attached", timeout=5_000)
+    loc.fill(value, timeout=1_500, force=True)
+
+
+def _clear_billing_postal(page) -> None:
+    """Erase Mã Bưu Điện (không bắt buộc) — bad values like 76165 block review."""
+    popup = _billing_popup(page)
+    loc = popup.locator('input[data-autom="form-field-postalCode"]').first
+    try:
+        loc.wait_for(state="attached", timeout=5_000)
+    except Exception:  # noqa: BLE001
+        log("FILL  billing postal field not visible — skip clear")
+        return
+    before = ""
+    try:
+        before = loc.input_value(timeout=1_000)
+    except Exception:  # noqa: BLE001
+        pass
+    if not (before or "").strip():
+        log("FILL  billing Mã Bưu Điện already empty")
+        return
+    try:
+        loc.fill("", timeout=2_000, force=True)
+    except Exception:  # noqa: BLE001
+        pass
+    page.evaluate(
+        """() => {
+          const dlg = document.querySelector(
+            '[role="dialog"][aria-modal="true"], .rc-overlay-popup'
+          );
+          const el = dlg && dlg.querySelector('input[data-autom="form-field-postalCode"]');
+          if (!el) return;
+          const proto = window.HTMLInputElement.prototype;
+          const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+          if (desc && desc.set) desc.set.call(el, '');
+          else el.value = '';
+          const tracker = el._valueTracker;
+          if (tracker && typeof tracker.setValue === 'function') tracker.setValue('x');
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }"""
+    )
+    after = ""
+    try:
+        after = loc.input_value(timeout=1_000)
+    except Exception:  # noqa: BLE001
+        pass
+    log(f"FILL  billing Mã Bưu Điện cleared (was={before!r} now={after!r})")
+
+
+def _billing_select_current(page, autom: str) -> str:
+    try:
+        return (
+            page.evaluate(
+                """(autom) => {
+                  const dlg = document.querySelector(
+                    '[role="dialog"][aria-modal="true"], .rc-overlay-popup'
+                  );
+                  const s = (dlg || document).querySelector(
+                    'select[data-autom="' + autom + '"]'
+                  );
+                  if (!s) return '';
+                  const opt = s.options[s.selectedIndex];
+                  return ((opt && opt.textContent) || s.value || '').trim();
+                }""",
+                autom,
+            )
+            or ""
+        )
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _select_billing_cascade(
+    page,
+    autom: str,
+    label: str,
+    *,
+    ajax_token: str = "",
+    wait_sec: float = 8.0,
+) -> bool:
+    """
+    Fast tỉnh/quận/phường select inside the popup.
+
+    Do NOT block on long AJAX timeouts — select, then confirm DOM stuck / next
+    cascade unlocks. (Waiting 10s for Selectstate often just burned the timeout.)
+    """
+    if not label:
+        return False
+    sel = _billing_select(page, autom)
+    try:
+        sel.wait_for(state="attached", timeout=5_000)
+    except Exception:  # noqa: BLE001
+        return False
+
+    deadline = time.time() + wait_sec
+    matched = ""
+    while time.time() < deadline:
+        try:
+            texts = sel.locator("option").all_text_contents()
+        except Exception:  # noqa: BLE001
+            page.wait_for_timeout(25)
+            continue
+        matched = _match_select_option_label(texts, label)
+        if matched:
+            break
+        page.wait_for_timeout(25)
+    if not matched:
+        return False
+
+    # Fire select; optional short AJAX listen (don't stall the sprint)
+    if ajax_token:
+        try:
+            with page.expect_response(
+                lambda r, tok=ajax_token: tok in r.url and r.status == 200,
+                timeout=2_500,
+            ) as resp_info:
+                sel.select_option(label=matched, timeout=1_500)
+            _ = resp_info.value
+        except Exception:  # noqa: BLE001
+            try:
+                sel.select_option(label=matched, timeout=1_500)
+            except Exception:  # noqa: BLE001
+                pass
+    else:
+        try:
+            sel.select_option(label=matched, timeout=1_500)
+        except Exception:  # noqa: BLE001
+            return False
+
+    settle_deadline = time.time() + 1.2
+    while time.time() < settle_deadline:
+        cur = _billing_select_current(page, autom)
+        cur_l = (cur or "").lower()
+        if "trước sáp" in cur_l:
+            page.wait_for_timeout(40)
+            continue
+        if cur_l == matched.lower() or matched.lower() in cur_l or label.lower() in cur_l:
+            return True
+        page.wait_for_timeout(40)
+    cur = _billing_select_current(page, autom)
+    log(f"Billing popup {autom} did not stick: want={label!r} got={cur!r}")
+    return False
+
+
+def _wait_billing_select_ready(
+    page,
+    autom: str,
+    *,
+    want_label: str = "",
+    min_options: int = 2,
+    timeout_ms: int = 10_000,
+) -> None:
+    """Wait until a select inside the billing popup is enabled with options."""
+    page.wait_for_function(
+        """({ autom, want, minOptions }) => {
+          const dlg = document.querySelector(
+            '[role="dialog"][aria-modal="true"], .rc-overlay-popup'
+          );
+          if (!dlg) return false;
+          const sel = dlg.querySelector('select[data-autom="' + autom + '"]');
+          if (!sel || sel.disabled) return false;
+          const opts = Array.from(sel.options).map(
+            (o) => (o.textContent || '').trim()
+          ).filter(Boolean);
+          if (opts.length < minOptions) return false;
+          if (!want) return true;
+          const w = String(want).toLowerCase();
+          return opts.some((t) => t.toLowerCase() === w || t.toLowerCase().includes(w));
+        }""",
+        arg={"autom": autom, "want": want_label, "minOptions": min_options},
+        timeout=timeout_ms,
+    )
+
+
+def _billing_view_address(page) -> dict[str, str]:
+    """Read saved-card billing address from the closed (view-mode) card panel."""
+    try:
+        return (
+            page.evaluate(
+                """() => {
+                  const root = document.querySelector('.rf-creditcard-address')
+                    || document.querySelector('.rf-creditcard-savedcard-address')
+                    || document;
+                  const dig = (autom) => {
+                    const el = root.querySelector('[data-autom="' + autom + '"]');
+                    return el ? (el.innerText || el.value || '').replace(/\\s+/g, ' ').trim() : '';
+                  };
+                  return {
+                    first_name: dig('form-field-firstName'),
+                    last_name: dig('form-field-lastName'),
+                    street: dig('form-field-street'),
+                    city: dig('form-field-city'),
+                    district: dig('form-field-district'),
+                    postal_code: dig('form-field-postalCode'),
+                    blob: (root.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 400),
+                  };
+                }"""
+            )
+            or {}
+        )
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _billing_address_already_ok(page, addr: dict) -> bool:
+    """
+    True when view-mode billing already matches config (skip slow popup).
+    Same idea as shipping skipping tỉnh/quận when fulfillment pre-seeded them.
+    """
+    if not isinstance(addr, dict) or not addr:
+        return False
+    view = _billing_view_address(page)
+    blob = (view.get("blob") or "").lower()
+    # Bad leftover postal from Apple Account — must open popup to clear
+    postal_cfg = (addr.get("postal_code") or "").strip()
+    postal_view = (view.get("postal_code") or "").strip()
+    if not postal_cfg and postal_view and re.search(r"\d{4,}", postal_view):
+        log(f"Billing view still has postal {postal_view!r} — need popup clear")
+        return False
+    if "76165" in blob or "ben van don" in blob or "ho chi minh city" in blob:
+        return False
+
+    def _has(want: str) -> bool:
+        w = (want or "").strip().lower()
+        if not w:
+            return True
+        return w in blob or w in (view.get("street") or "").lower()
+
+    street = (addr.get("street") or "").strip()
+    city = (addr.get("city") or "").strip()
+    district = (addr.get("district") or "").strip()
+    # Street is the strongest signal; require it + (city or district)
+    if street and not _has(street):
+        return False
+    if city and not (_has(city) or _has(city.replace("Quận ", ""))):
+        return False
+    if district and not (_has(district) or _has(district.replace("Phường ", ""))):
+        return False
+    if street and (city or district):
+        log(f"Billing view already OK — skip popup ({street!r} / {city!r})")
+        return True
+    return False
+
+
+def _sync_billing_address_from_checkout(
+    page,
+    addr: dict,
+    *,
+    timer: StageTimer | None = None,
+) -> None:
+    """
+    Overwrite saved-card BILLING address inside the Chỉnh Sửa Địa Chỉ popup.
+
+    Uses the SAME select helpers as shipping (_select_option_native /
+    _select_option_by_label) — one wait loop per field, skip when already set.
+    """
+    if not isinstance(addr, dict) or not addr:
+        log("Billing address sync skipped — no checkout.billing_address")
+        return
+    if _billing_address_already_ok(page, addr):
+        if timer:
+            timer.mark("18b billing already OK (skip popup)")
+        return
+
+    t0 = time.perf_counter()
+    _open_billing_address_edit(page)
+    popup = _billing_popup(page)
+    popup.wait_for(state="visible", timeout=12_000)
+    page.locator(
+        'select[id*="editSavedBillingAddress"][data-autom="form-field-state"], '
+        '[role="dialog"] select[data-autom="form-field-state"]'
+    ).first.wait_for(state="attached", timeout=12_000)
+    log("FILL  billing popup — same method as shipping (native/by_label)")
+
+    first_name = (addr.get("first_name") or "").strip()
+    last_name = (addr.get("last_name") or "").strip()
+    street = (addr.get("street") or "").strip()
+    street2 = (addr.get("street2") or "").strip()
+    state = (addr.get("state") or "Thành phố Hồ Chí Minh").strip()
+    city = (addr.get("city") or "Quận Bình Thạnh").strip()
+    district = (addr.get("district") or "").strip()
+    postal = (addr.get("postal_code") or "").strip()
+
+    def _fill_one(autom: str, value: str, label: str) -> None:
+        """Same fill style as shipping _fill_one (native + Playwright)."""
+        if not value:
+            return
+        t_f = time.perf_counter()
+        _fill_fields_native(page, {autom: value})
+        try:
+            popup.locator(f'input[data-autom="{autom}"]').first.fill(
+                str(value), timeout=1_200, force=True
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        log(f"Filled billing {label} ({(time.perf_counter() - t_f) * 1000:.0f}ms)")
+
+    # --- cascade: SAME helpers as shipping (_select_option_native / by_label) ---
+    t_state = time.perf_counter()
+    cur_state = _select_current_label(page, "form-field-state")
+    if (
+        state.lower() not in (cur_state or "").lower()
+        or "trước sáp" in (cur_state or "").lower()
+    ):
+        if not _select_option_native(page, "form-field-state", state, wait_sec=8.0):
+            if not _select_option_by_label(page, "form-field-state", state, wait_sec=4.0):
+                raise RuntimeError(f"Billing state/tỉnh select failed: {state!r}")
+        log(f"Selected billing state: {state}")
+    else:
+        log(f"Billing state already set: {cur_state}")
+    if timer:
+        timer.since(t_state, "18b1 select state/tỉnh", kind="fill")
+
+    # Fill text while Apple loads quận options (don't sit idle on Selectstate)
+    _fill_one("form-field-firstName", first_name, "firstName")
+    _fill_one("form-field-lastName", last_name, "lastName")
+    _fill_one("form-field-street", street, "street")
+    if street2:
+        _fill_one("form-field-street2", street2, "street2")
+    if postal:
+        _fill_one("form-field-postalCode", postal, "postalCode")
+    else:
+        _clear_billing_postal(page)
+
+    t_city = time.perf_counter()
+    cur_city = _select_current_label(page, "form-field-city")
+    if (
+        city.lower() not in (cur_city or "").lower()
+        or "trước sáp" in (cur_city or "").lower()
+        or not (cur_city or "").strip()
+    ):
+        if not _select_option_native(page, "form-field-city", city, wait_sec=12.0):
+            if not _select_option_by_label(page, "form-field-city", city, wait_sec=4.0):
+                raise RuntimeError(f"Billing city/quận select failed: {city!r}")
+        log(f"Selected billing city/quận: {city}")
+    else:
+        log(f"Billing city already set: {cur_city}")
+    if timer:
+        timer.since(t_city, "18b2 select city/quận", kind="fill")
+
+    if district:
+        t_d = time.perf_counter()
+        cur_d = _select_current_label(page, "form-field-district")
+        if district.lower() not in (cur_d or "").lower():
+            if not _select_option_by_label(
+                page, "form-field-district", district, wait_sec=12.0
+            ):
+                if not _select_option_native(
+                    page, "form-field-district", district, wait_sec=4.0
+                ):
+                    opts = page.evaluate(
+                        """() => {
+                          const s = document.querySelector(
+                            'select[data-autom="form-field-district"]'
+                          );
+                          return s
+                            ? Array.from(s.options).map(
+                                (o) => (o.textContent || '').trim()
+                              )
+                            : [];
+                        }"""
+                    )
+                    raise RuntimeError(
+                        f"Billing phường select failed: {district!r}; options={opts!r}"
+                    )
+            log(f"Selected billing phường: {district}")
+        else:
+            _select_option_by_label(page, "form-field-district", district, wait_sec=2.0)
+            log(f"Billing phường confirmed: {district}")
+        log(f"Phường step done ({(time.perf_counter() - t_d) * 1000:.0f}ms)")
+        if timer:
+            timer.since(t_d, "18b4 phường", kind="fill")
+
+    # Save inside popup
+    t_save = time.perf_counter()
+    save_btn = popup.locator('[data-autom="address-savebutton"]').first
+    save_btn.click(timeout=5_000)
+    log(
+        f"CLICK  Lưu Thay Đổi (billing popup): "
+        f"{(time.perf_counter() - t_save) * 1000:.0f}ms"
+    )
+    try:
+        page.wait_for_function(
+            """() => {
+              const dlg = document.querySelector(
+                '[role="dialog"][aria-modal="true"], .rc-overlay-popup'
+              );
+              if (!dlg) return true;
+              const r = dlg.getBoundingClientRect();
+              return r.width < 2 || r.height < 2
+                || !dlg.querySelector('[data-autom="address-savebutton"]');
+            }""",
+            timeout=12_000,
+        )
+        log("WAIT  Chỉnh Sửa Địa Chỉ popup closed")
+    except Exception:  # noqa: BLE001
+        errs = page.evaluate(
+            """() => {
+              const dlg = document.querySelector(
+                '[role="dialog"][aria-modal="true"], .rc-overlay-popup'
+              );
+              const root = dlg || document;
+              return Array.from(root.querySelectorAll(
+                '.form-message, [aria-invalid="true"]'
+              )).map((e) => (e.innerText || '').replace(/\\s+/g,' ').trim())
+                .filter((t) => t && !/trước sáp nhập/i.test(t))
+                .filter(Boolean).slice(0, 6);
+            }"""
+        )
+        if errs:
+            raise RuntimeError(f"Billing popup save still has errors: {errs!r}")
+    if timer:
+        timer.since(t0, "18b sync billing address", kind="fill")
+    log(f"Billing address sync done ({(time.perf_counter() - t0) * 1000:.0f}ms)")
+
+
+def _fill_cvv(
+    page,
+    cvv: str,
+    *,
+    timer: StageTimer | None = None,
+    mount_timeout_ms: int = 20_000,
+) -> None:
+    """
+    Fill saved-card security code (data-autom=security-code-input).
+    Call this BEFORE opening the Chỉnh Sửa Địa Chỉ popup (popup covers CVV).
+    """
+    autom = "security-code-input"
+    t_mount = time.perf_counter()
+    cvv_present = False
+    try:
+        page.wait_for_function(
+            """() => {
+              const el = document.querySelector('[data-autom="security-code-input"]');
+              if (!el || el.disabled) return false;
+              return !!(el.offsetParent || el.getClientRects().length);
+            }""",
+            timeout=mount_timeout_ms,
+        )
+        cvv_present = True
+    except Exception:  # noqa: BLE001
+        cvv_present = False
+    if not cvv_present:
+        log(
+            f"WAIT  no CVV field after {(time.perf_counter() - t_mount) * 1000:.0f}ms "
+            "— continuing (Apple sometimes skips CVV after billing edit)"
+        )
+        if timer:
+            timer.since(t_mount, "19 CVV field absent (skip)", kind="wait")
+        return
+    log(
+        f"WAIT  CVV field mounted: "
+        f"{(time.perf_counter() - t_mount) * 1000:.0f}ms"
+    )
+    _prefind_automs(page, {"cvv": autom, "reviewBtn": "continue-button-review"})
+
+    cvv = re.sub(r"\D", "", (cvv or "").strip())
+    t0 = time.perf_counter()
+    if cvv:
+        # Already filled? skip
+        have = page.evaluate(
+            """(a) => {
+              const el = document.querySelector('[data-autom="' + a + '"]');
+              return el ? (el.value || '').replace(/\\D/g, '') : '';
+            }""",
+            autom,
+        )
+        if have == cvv:
+            log(f"FILL  CVV already set (len={len(cvv)})")
+            if timer:
+                timer.since(t0, "19 fill CVV (already set)", kind="fill")
+            return
+        _fill_fields_native(page, {autom: cvv})
+        try:
+            page.locator(f'[data-autom="{autom}"]').first.fill(
+                cvv, timeout=1_500, force=True
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        page.wait_for_function(
+            """(args) => {
+              const el = document.querySelector('[data-autom="' + args.autom + '"]');
+              if (!el) return false;
+              const v = (el.value || '').replace(/\\D/g, '');
+              return v.length >= 3 && v === args.cvv;
+            }""",
+            arg={"autom": autom, "cvv": cvv},
+            timeout=4_000,
+        )
+        log(f"FILL  CVV via config ({(time.perf_counter() - t0) * 1000:.0f}ms, len={len(cvv)})")
+    else:
+        log("USER PICK  type CVV in Chrome NOW (security-code-input)…")
+        beep()
+        notify_macos("Assist — enter CVV", "Type CVV on the billing page — then we continue.")
+        page.wait_for_function(
+            """() => {
+              const el = document.querySelector('[data-autom="security-code-input"]');
+              if (!el) return false;
+              return (el.value || '').replace(/\\D/g, '').length >= 3;
+            }""",
+            timeout=45_000,
+        )
+        log(f"USER PICK  CVV present ({(time.perf_counter() - t0) * 1000:.0f}ms)")
+    if timer:
+        timer.since(t0, "19 fill CVV (verified)", kind="fill")
+
+
+def _click_review_and_stop_at_place_order(
+    page, *, timer: StageTimer | None = None
+) -> None:
+    """
+    Click "Xem Lại Đơn Hàng Của Bạn" → wait until Đặt hàng / placeOrder is visible.
+    NEVER clicks place order.
+    """
+    timer = timer or StageTimer()
+    # Ensure review enabled
+    t_en = time.perf_counter()
+    page.wait_for_function(
+        """() => {
+          const btn = document.querySelector('[data-autom="continue-button-review"]');
+          return !!(btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true');
+        }""",
+        timeout=10_000,
+    )
+    timer.since(t_en, "19b review button enabled", kind="wait")
+
+    review_ok = False
+    t_phase = time.perf_counter()
+    for attempt in range(3):
+        try:
+            click_ms = _click_autom(page, "continue-button-review", timeout_ms=5_000)
+            if attempt == 0:
+                timer.record(
+                    "20 click Xem Lại Đơn Hàng", click_ms, kind="click"
+                )
+        except Exception as exc:  # noqa: BLE001
+            log(f"Review click failed (attempt {attempt + 1}): {exc}")
+            page.wait_for_timeout(150)
+            continue
+        try:
+            _wait_js_heartbeat(
+                page,
+                """() => {
+                  const place = document.querySelector(
+                    '[data-autom="placeOrder"], [data-autom="place-order"], '
+                    + '#rs-checkout-place-order-button, button[id*="place-order"]'
+                  );
+                  if (place) return true;
+                  const buttons = Array.from(document.querySelectorAll('button'));
+                  return buttons.some((b) => {
+                    const t = (b.innerText || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                    return t === 'đặt hàng' || t === 'place order' || t.startsWith('đặt hàng');
+                  });
+                }""",
+                label=f"Apple hop Review→Đặt hàng (attempt {attempt + 1})",
+                timeout_ms=20_000,
+                snapshot_js=_SNAP_CHECKOUT,
+            )
+            review_ok = True
+            break
+        except Exception as hop_exc:  # noqa: BLE001
+            errs = page.evaluate(
+                """() => Array.from(document.querySelectorAll(
+                  '[class*="error"], [aria-invalid="true"], .form-message-error, [role="alert"]'
+                )).map((e) => (e.innerText || '').replace(/\\s+/g,' ').trim())
+                  .filter(Boolean).slice(0, 8)"""
+            )
+            log(
+                f"WAIT  place-order not reached (attempt {attempt + 1}, "
+                f"_s={_checkout_step(page)}, url={page.url[:90]}): {hop_exc}"
+                + (f" errors={errs!r}" if errs else "")
+            )
+            page.wait_for_timeout(200)
+
+    if not review_ok:
+        errs = page.evaluate(
+            """() => Array.from(document.querySelectorAll(
+              '[class*="error"], [aria-invalid="true"], .form-message-error, [role="alert"]'
+            )).map((e) => (e.innerText || '').replace(/\\s+/g,' ').trim())
+              .filter(Boolean).slice(0, 8)"""
+        )
+        raise RuntimeError(
+            f"Did not reach place-order page after review "
+            f"(url={page.url}, _s={_checkout_step(page)})"
+            + (f" errors={errs!r}" if errs else "")
+        )
+    timer.since(t_phase, "21 wait place-order page", kind="wait")
+
+    # Prefind place-order (must exist) — refuse to click it
+    place_info = page.evaluate(
+        """() => {
+          const byAutom = document.querySelector(
+            '[data-autom="placeOrder"], [data-autom="place-order"]'
+          );
+          const byText = Array.from(document.querySelectorAll('button')).find((b) => {
+            const t = (b.innerText || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+            return t === 'đặt hàng' || t === 'place order' || t.startsWith('đặt hàng');
+          });
+          const el = byAutom || byText;
+          if (!el) return null;
+          return {
+            autom: el.getAttribute('data-autom') || '',
+            text: (el.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 60),
+            disabled: !!el.disabled,
+          };
+        }"""
+    )
+    log(
+        f"Place-order control ready (NOT clicking): {place_info!r} "
+        f"_s={_checkout_step(page)} url={page.url}"
+    )
+    # Bring Đặt Hàng into view so the user sees the stop point
+    try:
+        place_loc = page.locator(
+            '[data-autom="placeOrder"], [data-autom="place-order"], '
+            '#rs-checkout-place-order-button'
+        )
+        if place_loc.count() == 0:
+            place_loc = page.get_by_role("button", name=re.compile(r"đặt hàng", re.I))
+        place_loc.first.scroll_into_view_if_needed(timeout=3_000)
+        log("SCROLL  Đặt Hàng button into view (not clicking)")
+    except Exception as scroll_exc:  # noqa: BLE001
+        log(f"SCROLL  Đặt Hàng skipped: {scroll_exc}")
+    log("DRY-RUN STOP — at Đặt hàng. Do NOT click place order.")
+
+
+def _click_autom(page, autom: str, *, timeout_ms: int = 8_000) -> float:
+    """Click a data-autom control. Returns total wall ms (attach wait + click)."""
     if _is_forbidden_checkout_autom(autom):
         raise RuntimeError(f"Refusing to click forbidden control: {autom}")
+    t0 = time.perf_counter()
     page.locator(f'[data-autom="{autom}"]').first.wait_for(
         state="attached", timeout=timeout_ms
     )
+    attach_ms = (time.perf_counter() - t0) * 1000
+    t_click = time.perf_counter()
     page.evaluate(
         """(autom) => {
           const el = document.querySelector('[data-autom="' + autom + '"]');
@@ -1185,6 +2667,13 @@ def _click_autom(page, autom: str, *, timeout_ms: int = 8_000) -> None:
         }""",
         autom,
     )
+    click_ms = (time.perf_counter() - t_click) * 1000
+    total = (time.perf_counter() - t0) * 1000
+    log(
+        f"CLICK  [{autom}] attach={attach_ms:.0f}ms click={click_ms:.0f}ms "
+        f"total={total:.0f}ms"
+    )
+    return total
 
 
 def wait_checkout_signin_if_needed(page, login_timeout_sec: int = 300) -> None:
@@ -1510,8 +2999,11 @@ def _fill_fields_native(page, mapping: dict[str, str]) -> dict[str, str]:
               };
               const out = {};
               for (const [autom, value] of Object.entries(mapping)) {
+                // Only real inputs — Apple also stamps data-autom on read-only <span>s
                 const nodes = Array.from(
-                  document.querySelectorAll('[data-autom="' + autom + '"]')
+                  document.querySelectorAll(
+                    'input[data-autom="' + autom + '"], textarea[data-autom="' + autom + '"]'
+                  )
                 );
                 let stuck = '';
                 for (const el of nodes) {
@@ -1656,25 +3148,103 @@ def _click_visible_text(page, *candidates: str) -> str | None:
     return None
 
 
+def _fulfillment_shown_location(page) -> str:
+    """Visible 'Giao hàng đến' / zip-edit label (Apple often city-only, no quận)."""
+    try:
+        return page.evaluate(
+            """() => {
+              const el = document.querySelector('[data-autom="checkout-zipcode-edit"]');
+              const t = ((el && (el.innerText || el.textContent)) || '')
+                .replace(/\\s+/g, ' ').trim();
+              const body = (document.body && document.body.innerText) || '';
+              const m = body.match(/Giao hàng đến[:\\s]+([^\\n]+)/i);
+              const extra = m ? m[1].replace(/\\s+/g, ' ').trim() : '';
+              return (t + ' ' + extra).replace(/\\s+/g, ' ').trim();
+            }"""
+        ) or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _fulfillment_continue_ready(page) -> bool:
+    try:
+        return bool(
+            page.evaluate(
+                """() => {
+                  const btn = document.querySelector(
+                    '[data-autom="fulfillment-continue-button"]'
+                  );
+                  const opt = document.querySelector(
+                    'input[data-autom^="fulfillment-option-"]'
+                  );
+                  const contOk = !!(btn && !btn.disabled
+                    && btn.getAttribute('aria-disabled') !== 'true');
+                  return !!(contOk && opt);
+                }"""
+            )
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _fulfillment_location_already_ok(shown: str, city: str) -> bool:
+    """Skip editor when the label already has the configured city (usually HCM).
+
+    Apple's control shows 'Thành phố Hồ Chí Minh (Thành phố Hồ Chí Minh)' and
+    does not print the quận — re-opening the editor does not change that.
+    """
+    s = (shown or "").strip().lower()
+    want = (city or "").strip().lower()
+    if not s:
+        return False
+    if "hồ chí minh" in want or "ho chi minh" in want or not want:
+        return "hồ chí minh" in s or "ho chi minh" in s
+    return want in s
+
+
 def _set_fulfillment_location(page, city: str, district: str) -> None:
     """
-    ALWAYS open location editor and pick city + quận (HCM + Quận Bình Thạnh).
-    Never skip — city-only HCM is not enough.
+    Set HCM + quận only if the fulfillment label is not already that city.
+    If 'Giao hàng đến' already shows HCM and Continue is enabled, skip the
+    editor and let the caller click Tiếp tục đến Địa Chỉ Giao Hàng.
     """
     city = city or "Thành phố Hồ Chí Minh"
     district = district or "Quận Bình Thạnh"
-    log(f"Location edit REQUIRED: {city} → {district}")
+    t_loc = time.perf_counter()
+    shown = _fulfillment_shown_location(page)
+    if _fulfillment_location_already_ok(shown, city) and _fulfillment_continue_ready(
+        page
+    ):
+        log(
+            f"Location already set ({shown[:80]!r}) — skip editor, "
+            "click Tiếp tục đến Địa Chỉ Giao Hàng"
+        )
+        log(
+            f"Location skip DONE in {(time.perf_counter() - t_loc) * 1000:.0f}ms"
+        )
+        return
+
+    log(f"Location edit needed (shown={shown[:80]!r}): {city} → {district}")
 
     _click_autom(page, "checkout-zipcode-edit", timeout_ms=8_000)
+    t_editor = time.perf_counter()
     page.locator('select[data-autom="form-field-state"]').first.wait_for(
         state="visible", timeout=8_000
     )
+    log(
+        f"WAIT  location editor visible: "
+        f"{(time.perf_counter() - t_editor) * 1000:.0f}ms"
+    )
 
     # 1) City / tỉnh-TP
+    t_city = time.perf_counter()
     for autom in ("form-field-state", "checkout-zipcode-city", "checkout-zipcode-state"):
         if page.locator(f'select[data-autom="{autom}"]').count() > 0:
             if _select_option_by_label(page, autom, city, wait_sec=8.0):
-                log(f"Location city via select {autom}")
+                log(
+                    f"FILL  location city via select {autom}: "
+                    f"{(time.perf_counter() - t_city) * 1000:.0f}ms"
+                )
                 break
     else:
         hit = _click_visible_text(
@@ -1683,9 +3253,13 @@ def _set_fulfillment_location(page, city: str, district: str) -> None:
             "Thành phố Hồ Chí Minh",
             "Hồ Chí Minh",
         )
-        log(f"Location city via text: {hit}")
+        log(
+            f"CLICK  location city via text={hit!r}: "
+            f"{(time.perf_counter() - t_city) * 1000:.0f}ms"
+        )
 
     # 2) Quận — wait on option list, not a fixed sleep
+    t_dist_opts = time.perf_counter()
     page.wait_for_function(
         """(district) => {
           const sel = document.querySelector('select[data-autom="form-field-city"]');
@@ -1699,12 +3273,20 @@ def _set_fulfillment_location(page, city: str, district: str) -> None:
         arg=district,
         timeout=8_000,
     )
+    log(
+        f"WAIT  quận options ready: "
+        f"{(time.perf_counter() - t_dist_opts) * 1000:.0f}ms"
+    )
+    t_dist = time.perf_counter()
     for autom in ("form-field-city", "checkout-zipcode-district", "form-field-district"):
         if page.locator(f'select[data-autom="{autom}"]').count() > 0:
             if _select_option_by_label(page, autom, district, wait_sec=6.0) or _select_option_by_label(
                 page, autom, "Bình Thạnh", wait_sec=3.0
             ):
-                log(f"Location quận via select {autom}")
+                log(
+                    f"FILL  location quận via select {autom}: "
+                    f"{(time.perf_counter() - t_dist) * 1000:.0f}ms"
+                )
                 break
     else:
         hit = _click_visible_text(
@@ -1717,7 +3299,10 @@ def _set_fulfillment_location(page, city: str, district: str) -> None:
             raise RuntimeError(
                 f"Could not select quận {district!r} in location editor"
             )
-        log(f"Location quận via text: {hit}")
+        log(
+            f"CLICK  location quận via text={hit!r}: "
+            f"{(time.perf_counter() - t_dist) * 1000:.0f}ms"
+        )
 
     # Apply / save — Apple VN uses deliveryOptionApply ("Áp dụng")
     applied = False
@@ -1740,11 +3325,15 @@ def _set_fulfillment_location(page, city: str, district: str) -> None:
     if not applied:
         for label in ("Áp Dụng", "Áp dụng", "Apply", "Xong", "Done", "Lưu"):
             try:
+                t_btn = time.perf_counter()
                 btn = page.get_by_role("button", name=re.compile(f"^{label}$", re.I))
                 if btn.count() > 0:
                     btn.first.click(force=True, timeout=1_200, no_wait_after=True)
                     applied = True
-                    log(f"Location apply via button {label!r}")
+                    log(
+                        f"CLICK  location apply button {label!r}: "
+                        f"{(time.perf_counter() - t_btn) * 1000:.0f}ms"
+                    )
                     break
             except Exception:  # noqa: BLE001
                 continue
@@ -1752,6 +3341,7 @@ def _set_fulfillment_location(page, city: str, district: str) -> None:
         log("WARNING: no location Apply button found")
 
     # Proceed as soon as delivery options / continue are usable again
+    t_settle = time.perf_counter()
     try:
         page.wait_for_function(
             """() => {
@@ -1766,6 +3356,10 @@ def _set_fulfillment_location(page, city: str, district: str) -> None:
         )
     except Exception:  # noqa: BLE001
         pass
+    log(
+        f"WAIT  location apply settle: "
+        f"{(time.perf_counter() - t_settle) * 1000:.0f}ms"
+    )
     try:
         shown = page.locator('[data-autom="checkout-zipcode-edit"]').first.inner_text(
             timeout=1_500
@@ -1777,6 +3371,132 @@ def _set_fulfillment_location(page, city: str, district: str) -> None:
             log("WARNING: location text may not show Bình Thạnh yet — continuing")
     except Exception:  # noqa: BLE001
         pass
+    log(
+        f"Location edit DONE in {(time.perf_counter() - t_loc) * 1000:.0f}ms "
+        "(our clicks). Next hop Fulfillment→Shipping is Apple (~10s) — watch heartbeats."
+    )
+
+
+def _fold_addr_text(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip().lower())
+
+
+def _list_saved_shipping_addresses(page) -> list[dict]:
+    """Visible saved-address radios: title = name, .form-label-small = street."""
+    try:
+        rows = page.evaluate(
+            """() => Array.from(
+              document.querySelectorAll('input[data-autom="saved-address"]')
+            ).map((el) => {
+              const label = el.id
+                ? document.querySelector('label[for="' + el.id + '"]')
+                : null;
+              const titleEl = label && label.querySelector('.form-selector-title');
+              const streetEl = label && label.querySelector('.form-label-small');
+              return {
+                value: el.value || '',
+                id: el.id || '',
+                name: ((titleEl && titleEl.innerText) || '').replace(/\\s+/g, ' ').trim(),
+                street: ((streetEl && streetEl.innerText) || '').replace(/\\s+/g, ' ').trim(),
+                text: ((label && label.innerText) || '').replace(/\\s+/g, ' ').trim(),
+                checked: !!el.checked,
+              };
+            })"""
+        )
+    except Exception:  # noqa: BLE001
+        return []
+    return rows if isinstance(rows, list) else []
+
+
+def _saved_address_matches(card: dict, addr: dict) -> bool:
+    """Match config first/last + street against the visible saved-address card.
+
+    Apple truncates the street on the radio (e.g. '... tp' vs config '... tphcm'),
+    so substring / shared-prefix is enough. Name is the title ('Võ Văn Quân').
+    """
+    title = _fold_addr_text(str(card.get("name") or card.get("text") or ""))
+    shown_street = _fold_addr_text(str(card.get("street") or ""))
+    first = _fold_addr_text(str(addr.get("first_name") or ""))
+    last = _fold_addr_text(str(addr.get("last_name") or ""))
+    want_street = _fold_addr_text(str(addr.get("street") or ""))
+    full_name = _fold_addr_text(f"{first} {last}".strip())
+
+    name_ok = False
+    if full_name and full_name in title:
+        name_ok = True
+    elif first and last and first in title and last in title:
+        name_ok = True
+    elif first and not last and first in title:
+        name_ok = True
+
+    street_ok = False
+    if want_street and shown_street:
+        if shown_street in want_street or want_street in shown_street:
+            street_ok = True
+        else:
+            n = min(len(want_street), len(shown_street))
+            common = 0
+            for i in range(n):
+                if want_street[i] != shown_street[i]:
+                    break
+                common += 1
+            street_ok = common >= 12
+
+    if want_street and (first or last):
+        return name_ok and street_ok
+    if want_street:
+        return street_ok
+    if first or last:
+        return name_ok
+    return False
+
+
+def _select_matching_saved_address(
+    page,
+    addr: dict,
+    timer: StageTimer | None = None,
+) -> bool:
+    """Click the saved-address radio whose visible name+street match config.
+
+    Returns True if a match was selected (or already checked).
+    """
+    cards = _list_saved_shipping_addresses(page)
+    if not cards:
+        log("No saved-address radios on Shipping — will fill new")
+        return False
+    for card in cards:
+        log(
+            f"Saved address {card.get('value')}: "
+            f"name={card.get('name')!r} street={card.get('street')!r}"
+            f"{' [checked]' if card.get('checked') else ''}"
+        )
+    match = next((c for c in cards if _saved_address_matches(c, addr)), None)
+    if not match:
+        log("No saved address matches shipping_address name+street — will fill new")
+        return False
+    value = str(match.get("value") or "").strip()
+    if not value:
+        log("Matched saved address has empty value — will fill new")
+        return False
+    selector = f'input[data-autom="saved-address"][value="{value}"]'
+    hint = (match.get("street") or match.get("name") or "").strip()
+    t0 = time.perf_counter()
+    _select_radio_until_checked(
+        page,
+        selector,
+        label=f"saved-address {value}",
+        text_hints=[hint] if hint else None,
+        timeout_ms=6_000,
+        attempts=5,
+    )
+    if not _radio_is_checked(page, selector):
+        log(f"WARNING: saved address {value} did not stay checked")
+        return False
+    shown = f"{match.get('name') or ''} / {match.get('street') or ''}".strip(" /")
+    log(f"Selected saved shipping address {value}: {shown}")
+    if timer:
+        timer.since(t0, f"15 select saved address ({value})", kind="click")
+    return True
 
 
 def _fill_new_shipping_address(
@@ -1897,9 +3617,27 @@ def _fill_new_shipping_address(
         t0 = time.perf_counter()
         cur_d = _select_current_label(page, "form-field-district")
         if district.lower() not in cur_d.lower():
+            _wait_js_heartbeat(
+                page,
+                """(want) => {
+                  const sel = document.querySelector(
+                    'select[data-autom="form-field-district"]'
+                  );
+                  if (!sel || sel.disabled) return false;
+                  const w = String(want || '').toLowerCase();
+                  return Array.from(sel.options).some((o) => {
+                    const t = (o.textContent || '').trim().toLowerCase();
+                    return t && (t === w || t.includes(w));
+                  });
+                }""",
+                arg=district,
+                label="phường options after quận (Apple cascade)",
+                timeout_ms=12_000,
+                snapshot_js=_SNAP_CHECKOUT,
+            )
             # Playwright select_option — React commits this reliably
             if not _select_option_by_label(
-                page, "form-field-district", district, wait_sec=12.0
+                page, "form-field-district", district, wait_sec=4.0
             ):
                 opts = page.evaluate(
                     """() => {
@@ -1930,24 +3668,31 @@ def advance_checkout_to_payment(
 ) -> None:
     """
     Apple VN path (dry-run stop at payment):
-      Fulfillment (HCM + Bình Thạnh) → Shipping (new address) → Billing (saved card)
+      Fulfillment (HCM + Bình Thạnh) → Shipping (matching saved address, else new)
+      → Billing (saved card)
     Never clicks review / Đặt hàng.
     """
     timer = timer or StageTimer()
     checkout_cfg = checkout_cfg or {}
     loc_city = checkout_cfg.get("location_city") or "Thành phố Hồ Chí Minh"
     loc_district = checkout_cfg.get("location_district") or "Quận Bình Thạnh"
-    addr = checkout_cfg.get("address") or {}
-    if not isinstance(addr, dict):
-        addr = {}
+    # shipping_address = delivery; billing_address = card. Legacy: address = shipping.
+    ship_addr = checkout_cfg.get("shipping_address") or checkout_cfg.get("address") or {}
+    if not isinstance(ship_addr, dict):
+        ship_addr = {}
+    bill_addr = checkout_cfg.get("billing_address") or ship_addr
+    if not isinstance(bill_addr, dict):
+        bill_addr = ship_addr
     contact = checkout_cfg.get("contact") or {}
     if not isinstance(contact, dict):
         contact = {}
 
+    t_sso = time.perf_counter()
     wait_checkout_signin_if_needed(page, login_timeout_sec)
-    timer.mark("10b checkout SSO ready")
+    timer.since(t_sso, "10b checkout SSO ready", kind="wait")
 
     # ===== Fulfillment =====
+    t_fulfill = time.perf_counter()
     page.wait_for_function(
         """() => {
           const u = location.href;
@@ -1960,7 +3705,7 @@ def advance_checkout_to_payment(
     page.locator('[data-autom="checkout-zipcode-edit"]').first.wait_for(
         state="attached", timeout=10_000
     )
-    timer.mark("11 fulfillment page")
+    timer.since(t_fulfill, "11 fulfillment page", kind="wait")
     log(f"Fulfillment at: {page.url} (_s={_checkout_step(page)})")
     _prefind_automs(
         page,
@@ -1971,10 +3716,12 @@ def advance_checkout_to_payment(
         },
     )
 
+    t_loc = time.perf_counter()
     _set_fulfillment_location(page, loc_city, loc_district)
-    timer.mark("12 set location HCM/Bình Thạnh")
+    timer.since(t_loc, "12 fulfillment location (skip or edit)", kind="fill")
 
     # Ensure a delivery option is selected (prefer S1)
+    t_opt = time.perf_counter()
     page.evaluate(
         """() => {
           const prefer = document.querySelector('input[data-autom="fulfillment-option-S1"]');
@@ -1989,7 +3736,12 @@ def advance_checkout_to_payment(
           (label || target).click();
         }"""
     )
+    log(
+        f"CLICK  fulfillment delivery option: "
+        f"{(time.perf_counter() - t_opt) * 1000:.0f}ms"
+    )
 
+    t_en = time.perf_counter()
     page.wait_for_function(
         """() => {
           const btn = document.querySelector('[data-autom="fulfillment-continue-button"]');
@@ -1997,22 +3749,25 @@ def advance_checkout_to_payment(
         }""",
         timeout=10_000,
     )
-    timer.mark("12b fulfillment continue enabled")
+    timer.since(t_en, "12b fulfillment continue enabled", kind="wait")
 
     # Same pattern as bag → Thanh Toán: click immediately (label/el), then wait for next step
     shipping_ok = False
+    t_ship_phase = time.perf_counter()
     for attempt in range(3):
         try:
-            _click_autom(page, "fulfillment-continue-button", timeout_ms=3_000)
+            click_ms = _click_autom(page, "fulfillment-continue-button", timeout_ms=3_000)
+            if attempt == 0:
+                timer.record("13 click fulfillment continue", click_ms, kind="click")
         except Exception as exc:  # noqa: BLE001
             log(f"Fulfillment continue click failed (attempt {attempt + 1}): {exc}")
             page.wait_for_timeout(120)
             continue
-        if attempt == 0:
-            timer.mark("13 click fulfillment continue")
         try:
-            # Wait for Shipping URL AND form controls (URL can flip before React mounts)
-            page.wait_for_function(
+            # Apple keeps "Chúng tôi giao hàng..." on screen ~10s after Continue.
+            # Heartbeat so that idle hop is visible (not a hang).
+            _wait_js_heartbeat(
+                page,
                 """() => {
                   const u = location.href;
                   const onShip = u.includes('Shipping') || u.includes('_s=Shipping');
@@ -2021,21 +3776,23 @@ def advance_checkout_to_payment(
                   );
                   return onShip && form;
                 }""",
-                timeout=15_000,
+                label=f"Apple hop Fulfillment→Shipping (attempt {attempt + 1})",
+                timeout_ms=15_000,
+                snapshot_js=_SNAP_CHECKOUT,
             )
             shipping_ok = True
             break
-        except Exception:  # noqa: BLE001
+        except Exception as hop_exc:  # noqa: BLE001
             log(
-                f"Shipping not reached (attempt {attempt + 1}, "
-                f"url={page.url}, _s={_checkout_step(page)})"
+                f"WAIT  Shipping not reached (attempt {attempt + 1}, "
+                f"url={page.url}, _s={_checkout_step(page)}): {hop_exc}"
             )
             page.wait_for_timeout(150)
     if not shipping_ok:
         raise RuntimeError(
             f"Did not reach shipping after fulfillment (url={page.url}, _s={_checkout_step(page)})"
         )
-    timer.mark("13b Shipping page + form")
+    timer.since(t_ship_phase, "13b wait Shipping page + form", kind="wait")
     log(f"Shipping at: {page.url} (_s={_checkout_step(page)})")
     _prefind_automs(
         page,
@@ -2049,9 +3806,29 @@ def advance_checkout_to_payment(
         },
     )
 
-    if checkout_cfg.get("use_new_address", True):
-        _fill_new_shipping_address(page, addr, contact, timer=timer)
+    force_new = bool(checkout_cfg.get("use_new_address", False))
+    used_saved = False
+    if not force_new:
+        used_saved = _select_matching_saved_address(page, ship_addr, timer=timer)
+    else:
+        log("use_new_address=true — skipping saved-address match")
+
+    if used_saved:
+        t_verify = time.perf_counter()
+        page.wait_for_function(
+            """() => {
+              const el = document.querySelector(
+                'input[data-autom="saved-address"]:checked'
+              );
+              return !!el;
+            }""",
+            timeout=3_000,
+        )
+        timer.since(t_verify, "15e saved address verified", kind="wait")
+    else:
+        _fill_new_shipping_address(page, ship_addr, contact, timer=timer)
         # Quick verify (fields already checked during fill)
+        t_verify = time.perf_counter()
         page.wait_for_function(
             """() => {
               const n = document.querySelector('input[data-autom="newAddress"]');
@@ -2062,20 +3839,10 @@ def advance_checkout_to_payment(
             }""",
             timeout=3_000,
         )
-        timer.mark("15e address verified")
-    else:
-        page.evaluate(
-            """() => {
-              const el = document.querySelector('input[data-autom="saved-address"]');
-              if (!el) return;
-              const label = el.id
-                ? document.querySelector('label[for="' + el.id + '"]') : null;
-              (label || el).click();
-            }"""
-        )
-        timer.mark("15 select saved address")
+        timer.since(t_verify, "15e address verified", kind="wait")
 
     # Prefind → wait enabled → click (in-page then Playwright force, like pre-SSO)
+    t_ship_en = time.perf_counter()
     page.wait_for_function(
         """() => {
           const btn = document.querySelector('[data-autom="shipping-continue-button"]');
@@ -2083,35 +3850,45 @@ def advance_checkout_to_payment(
         }""",
         timeout=10_000,
     )
-    timer.mark("16a shipping continue enabled")
+    timer.since(t_ship_en, "16a shipping continue enabled", kind="wait")
     _prefind_automs(page, {"shipContinue": "shipping-continue-button"})
 
     billing_ok = False
+    t_bill_phase = time.perf_counter()
     for attempt in range(3):
         try:
-            _click_autom(page, "shipping-continue-button", timeout_ms=3_000)
+            click_ms = _click_autom(page, "shipping-continue-button", timeout_ms=3_000)
+            if attempt == 0:
+                timer.record(
+                    "16b click Tiếp tục đến Thanh Toán", click_ms, kind="click"
+                )
         except Exception as exc:  # noqa: BLE001
             log(f"Shipping continue click failed (attempt {attempt + 1}): {exc}")
             try:
+                t_force = time.perf_counter()
                 page.locator('[data-autom="shipping-continue-button"]').first.click(
                     force=True, timeout=1_500, no_wait_after=True
+                )
+                log(
+                    f"CLICK  shipping-continue force: "
+                    f"{(time.perf_counter() - t_force) * 1000:.0f}ms"
                 )
             except Exception:  # noqa: BLE001
                 page.wait_for_timeout(120)
                 continue
-        if attempt == 0:
-            timer.mark("16b click Tiếp tục đến Thanh Toán")
         try:
-            # Require payment options mounted — Billing URL alone is ~0.8s early
-            page.wait_for_function(
+            _wait_js_heartbeat(
+                page,
                 """() => !!document.querySelector(
                   '[data-autom="checkout-billingOptions-SAVED_CARD"], [data-autom^="checkout-billingOptions-"]'
                 )""",
-                timeout=15_000,
+                label=f"Apple hop Shipping→Billing (attempt {attempt + 1})",
+                timeout_ms=15_000,
+                snapshot_js=_SNAP_CHECKOUT,
             )
             billing_ok = True
             break
-        except Exception:  # noqa: BLE001
+        except Exception as hop_exc:  # noqa: BLE001
             errs = page.evaluate(
                 """() => Array.from(document.querySelectorAll(
                   '[class*="error"], [aria-invalid="true"], .form-message-error, [data-autom*="error"]'
@@ -2119,7 +3896,7 @@ def advance_checkout_to_payment(
             )
             step = _checkout_step(page)
             log(
-                f"Still not on billing (attempt {attempt + 1}, _s={step})"
+                f"WAIT  still not billing (attempt {attempt + 1}, _s={step}): {hop_exc}"
                 + (f" errors={errs!r}" if errs else "")
             )
             page.wait_for_timeout(200)
@@ -2128,7 +3905,7 @@ def advance_checkout_to_payment(
         raise RuntimeError(
             f"Did not reach billing/payment page (url={page.url}, _s={_checkout_step(page)})"
         )
-    timer.mark("17 billing + payment options")
+    timer.since(t_bill_phase, "17 wait billing + payment options", kind="wait")
     log(f"Billing at: {page.url} (_s={_checkout_step(page)})")
     _prefind_automs(
         page,
@@ -2139,10 +3916,122 @@ def advance_checkout_to_payment(
     )
 
     # Prefind → click → verify (same as declines)
+    t_card = time.perf_counter()
     _click_autom(page, "checkout-billingOptions-SAVED_CARD", timeout_ms=5_000)
+    t_card_verify = time.perf_counter()
     _verify_checked(page, "checkout-billingOptions-SAVED_CARD", timeout_ms=5_000)
-    timer.mark("18 select saved card (verified)")
-    log("Selected SAVED_CARD — STOPPING before review / Đặt hàng.")
+    log(
+        f"WAIT  saved card verified: "
+        f"{(time.perf_counter() - t_card_verify) * 1000:.0f}ms"
+    )
+    timer.since(t_card, "18 select saved card (verified)", kind="click")
+    log("Selected SAVED_CARD — billing sync (if needed) → CVV → review → stop at Đặt hàng.")
+    # CVV + Chỉnh sửa / address block mount slowly after SAVED_CARD expand
+    t_mount = time.perf_counter()
+    try:
+        page.wait_for_function(
+            """() => {
+              const edit = document.querySelector(
+                'button[id*="editBillingAddress"], button.rf-creditcard-editaddress'
+              );
+              const cvv = document.querySelector('[data-autom="security-code-input"]');
+              const open = !!document.querySelector(
+                '[data-autom="address-savebutton"], input[id*="editSavedBillingAddress"]'
+              );
+              const editOk = !!(edit && (edit.offsetParent || edit.getClientRects().length));
+              const cvvOk = !!(cvv && !cvv.disabled
+                && (cvv.offsetParent || cvv.getClientRects().length));
+              // Need both when possible — Apple sometimes shows CVV before Chỉnh sửa
+              return open || (editOk && cvvOk) || editOk || cvvOk;
+            }""",
+            timeout=20_000,
+        )
+        log(
+            f"WAIT  billing CVV/address panel mount: "
+            f"{(time.perf_counter() - t_mount) * 1000:.0f}ms"
+        )
+    except Exception as mount_exc:  # noqa: BLE001
+        log(
+            f"WAIT  billing card details mount "
+            f"({(time.perf_counter() - t_mount) * 1000:.0f}ms): {mount_exc}"
+        )
+    if timer:
+        timer.since(t_mount, "18a billing CVV/address mount", kind="wait")
+
+    # CVV first — field is on the card panel BEFORE the address popup covers it
+    cvv = ""
+    if isinstance(checkout_cfg, dict):
+        cvv = str(checkout_cfg.get("cvv") or checkout_cfg.get("security_code") or "")
+    _fill_cvv(page, cvv, timer=timer, mount_timeout_ms=3_000)
+
+    # Optional safety net (OFF by default). Prefer fixing card billing in Apple Account.
+    sync_billing = bool(
+        isinstance(checkout_cfg, dict) and checkout_cfg.get("sync_billing_address")
+    )
+    if not sync_billing:
+        log(
+            "Billing sync OFF — using Apple Account card address "
+            "(fix it before launch; set sync_billing_address: true only as last resort)"
+        )
+    if sync_billing:
+        need_sync = _billing_address_editor_open(page)
+        if not need_sync:
+            force = bool(
+                isinstance(checkout_cfg, dict)
+                and checkout_cfg.get("force_sync_billing_address")
+            )
+            if force:
+                need_sync = True
+        if need_sync:
+            _sync_billing_address_from_checkout(page, bill_addr, timer=timer)
+            # Popup can wipe CVV — force re-fill without long visibility wait
+            if cvv:
+                still = page.evaluate(
+                    """(want) => {
+                      const el = document.querySelector(
+                        '[data-autom="security-code-input"]'
+                      );
+                      if (!el) return { ok: false, len: 0 };
+                      const v = (el.value || '').replace(/\\D/g, '');
+                      if (v === want) return { ok: true, len: v.length };
+                      const proto = window.HTMLInputElement.prototype;
+                      const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+                      if (desc && desc.set) desc.set.call(el, want);
+                      else el.value = want;
+                      const tracker = el._valueTracker;
+                      if (tracker && typeof tracker.setValue === 'function') {
+                        tracker.setValue('');
+                      }
+                      el.dispatchEvent(new Event('input', { bubbles: true }));
+                      el.dispatchEvent(new Event('change', { bubbles: true }));
+                      const v2 = (el.value || '').replace(/\\D/g, '');
+                      return { ok: v2 === want, len: v2.length };
+                    }""",
+                    re.sub(r"\D", "", cvv),
+                ) or {}
+                if still.get("ok"):
+                    log(f"FILL  CVV re-assert after address save (len={still.get('len')})")
+                else:
+                    log("CVV missing after address save — short remount re-fill")
+                    _fill_cvv(page, cvv, timer=timer, mount_timeout_ms=1_500)
+
+    try:
+        _click_review_and_stop_at_place_order(page, timer=timer)
+    except RuntimeError as exc:
+        msg = str(exc).lower()
+        if sync_billing and (
+            "không hợp lệ" in msg
+            or "billing" in msg
+            or "address" in msg
+            or "định dạng" in msg
+            or "error" in msg
+        ):
+            log(f"Review blocked — retry after billing sync: {exc}")
+            _sync_billing_address_from_checkout(page, bill_addr, timer=timer)
+            _fill_cvv(page, cvv, timer=timer)
+            _click_review_and_stop_at_place_order(page, timer=timer)
+        else:
+            raise
 
 
 def click_next_steps(
@@ -2153,9 +4042,8 @@ def click_next_steps(
     checkout_cfg: dict | None = None,
 ) -> None:
     """
-    After add-to-cart: Xem Giỏ Hàng → bag → Thanh Toán →
-    Fulfillment (HCM/Bình Thạnh) → new shipping address → Billing (saved card).
-    STOP before review / place order.
+    After add-to-cart: bag → Thanh Toán → Fulfillment → Shipping →
+    Billing (saved card + CVV) → Review → STOP at Đặt hàng (never clicks it).
     """
     timer = timer or StageTimer()
     click_xem_gio_hang_now(page, timer)
@@ -2171,10 +4059,10 @@ def click_next_steps(
     )
 
     timer.report("EFFICIENCY TIMER")
-    log("DRY-RUN STOP — at payment method (saved card). Do NOT click review / Đặt hàng.")
+    log("DRY-RUN STOP — at Đặt hàng page. Do NOT click place order.")
     notify_macos(
-        "Assist — stopped at payment",
-        "Saved card selected. YOU continue / place order — assist will not.",
+        "Assist — stopped at Đặt hàng",
+        "Review done. YOU click Đặt hàng if you want — assist will not.",
     )
 
 
@@ -2203,9 +4091,21 @@ def main(argv: list[str] | None = None) -> int:
         for u in family_urls_cfg:
             if isinstance(u, str) and u.strip():
                 family_candidates.append(validate_store_url(u.strip(), "family_urls"))
+        hub_raw = (cfg.get("family_hub_url") or "https://www.apple.com/vn/shop/buy-iphone/").strip()
+        family_hub_url = validate_store_url(hub_raw, "family_hub_url") if hub_raw else ""
+        family_match_cfg = cfg.get("family_match") or []
+        if not isinstance(family_match_cfg, list):
+            family_match_cfg = []
+        family_match = [str(x) for x in family_match_cfg if str(x).strip()]
         product_prefs = cfg.get("product_prefs") if isinstance(cfg.get("product_prefs"), dict) else {}
         use_dynamic = bool(product_prefs) or bool(family_candidates)
-        unlock_timeout = args.unlock_timeout_sec or int(cfg.get("unlock_timeout_sec") or 180)
+        # Phase A budget only (hub + user-pick are separate). Default 20s — not minutes.
+        unlock_timeout = args.unlock_timeout_sec or int(cfg.get("unlock_timeout_sec") or 20)
+        family_user_pick_sec = float(
+            cfg.get("family_user_pick_timeout_sec")
+            or (product_prefs.get("user_pick_timeout_sec") if product_prefs else None)
+            or 45
+        )
         # Warm should use a known-live practice SKU (not the launch family page)
         warm_url_raw = (cfg.get("warm_product_url") or "").strip()
         warm_product_url = (
@@ -2269,6 +4169,23 @@ def main(argv: list[str] | None = None) -> int:
                     "(avoids extra silent signIn hop every launch)"
                 )
 
+            # Timed wait AFTER warm Chrome is attached — then sprint immediately at T-0
+            if not (args.setup_login or args.warm_only):
+                tz = config_timezone(cfg)
+                if args.in_duration:
+                    t_go = now_in_tz(tz) + parse_duration(args.in_duration)
+                    log(f"Timer practice: sprint at {format_ts(t_go)} (--in {args.in_duration})")
+                    wait_until(t_go, tz, "T-0 practice")
+                elif args.at_launch:
+                    t_go = parse_launch_at(cfg)
+                    log(f"Launch timer: sprint at {format_ts(t_go)} (--at-launch)")
+                    if now_in_tz(tz) < t_go:
+                        wait_until(t_go, tz, "T-0")
+                    else:
+                        log(f"launch_at already past ({format_ts(t_go)}) — sprinting NOW")
+                else:
+                    log("No --at-launch / --in — sprinting immediately (--now default)")
+
             do_warm = args.setup_login or args.warm_only or args.warmup_before_run
             if do_warm:
                 log(
@@ -2313,6 +4230,9 @@ def main(argv: list[str] | None = None) -> int:
                         candidates,
                         timer=timer,
                         timeout_sec=unlock_timeout,
+                        hub_url=family_hub_url,
+                        family_match=family_match,
+                        user_pick_timeout_sec=family_user_pick_sec,
                     )
                     select_product_dimensions(
                         page,
@@ -2349,11 +4269,11 @@ def main(argv: list[str] | None = None) -> int:
                 beep()
                 print_manual_clicks(cfg)
                 notify_macos(
-                    "Assist done — stopped at payment",
-                    f"{label}: at saved-card payment. Do NOT place order (dry-run).",
+                    "Assist done — stopped at Đặt hàng",
+                    f"{label}: at place-order page. Do NOT click Đặt hàng (dry-run).",
                 )
-                log("SUCCESS: reached billing with saved card selected.")
-                log("STOPPING before review / Đặt hàng.")
+                log("SUCCESS: reached Đặt hàng page (place-order visible, not clicked).")
+                log("STOPPING before Đặt hàng / Place Order.")
 
             # Brief pause so you can see the page — Chrome stays open either way
             page.wait_for_timeout(max(args.keep_open_sec, 3) * 1000)
