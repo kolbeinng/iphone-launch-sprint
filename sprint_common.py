@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
@@ -284,8 +284,10 @@ def config_timezone(cfg: dict[str, Any]) -> ZoneInfo:
     name = cfg.get("timezone") or "Asia/Ho_Chi_Minh"
     try:
         return ZoneInfo(name)
-    except Exception as exc:  # noqa: BLE001
-        raise ConfigError(f"Invalid timezone: {name}") from exc
+    except ZoneInfoNotFoundError as exc:
+        raise ConfigError(
+            f"Invalid timezone: {name}. On Windows run: python -m pip install tzdata"
+        ) from exc
 
 
 def parse_launch_at(cfg: dict[str, Any]) -> datetime:
