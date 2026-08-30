@@ -43,42 +43,186 @@ Repo (private, your account): https://github.com/kolbeinng/iphone-launch-sprint
 
 ---
 
-## New computer — get the app from GitHub
+## New Mac — do this in this order (no shortcuts)
 
-Sign in to GitHub as **kolbeinng** first (private repo). Then:
+This is the only path. Do not skip a letter. Do not install Homebrew. Do not use Safari. Do not use Cursor or any AI for this.
+
+The two failures that stop people: **Command Line Tools never installed**, and **Playwright installed in the wrong Python**.
+
+### A. Google Chrome
+
+Install **Google Chrome** from Google. Not Safari. Not Chromium. Not “Chrome for Testing.”
+
+### B. Apple Command Line Tools (do this before anything else in Terminal)
+
+Open **Terminal**. Paste this and press Return:
 
 ```bash
+xcode-select --install
+```
+
+A Mac window pops up. Click **Install**. Wait until it is fully done (often 5–15 minutes). If it says already installed, continue.
+
+Then run both of these. You need **git** and **Python 3.10 or newer**:
+
+```bash
+git --version
+python3 --version
+```
+
+If either command fails, Command Line Tools is not finished. Redo step B. Do not continue.
+
+If `python3 --version` is older than 3.10, install Python from https://www.python.org/downloads/ (the macOS installer). Then **quit Terminal and open it again**, and check `python3 --version` once more.
+
+### C. GitHub (the repo is private)
+
+In a browser, sign in to GitHub as **kolbeinng**. Open:
+
+https://github.com/kolbeinng/iphone-launch-sprint
+
+If you see 404, you are on the wrong GitHub account. Stop and fix that.
+
+### D. Download the project
+
+In Terminal:
+
+```bash
+mkdir -p ~/Projects
+cd ~/Projects
 git clone https://github.com/kolbeinng/iphone-launch-sprint.git
 cd iphone-launch-sprint
+git status
 ```
 
-Windows (PowerShell), after clone:
+You must be on `cursor/dynamic-sku-select`. If `git status` says `main` (old copy):
 
-```powershell
-py -3 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-playwright install chrome
-copy config.example.yaml config.yaml
+```bash
+git checkout cursor/dynamic-sku-select
 ```
 
-macOS:
+### E. Python environment + Playwright (this is the step people skip)
+
+Stay in `~/Projects/iphone-launch-sprint`. Run **exactly** these lines, in this order:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-playwright install chrome
+```
+
+The line in Terminal must now start with `(.venv)`. If it does not, stop — step E failed.
+
+Then:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m playwright install chrome
+```
+
+Use `python` here, not `python3`. Use `python -m pip` and `python -m playwright`. Do not type `pip` or `playwright` alone.
+
+Prove it worked:
+
+```bash
+python -c "from playwright.sync_api import sync_playwright; print('playwright ok')"
+```
+
+You must see `playwright ok`. If you see “Playwright not installed” later, you opened a **new** Terminal and forgot `source .venv/bin/activate`.
+
+**Every new Terminal window**, before any `assist.py` command:
+
+```bash
+cd ~/Projects/iphone-launch-sprint
+source .venv/bin/activate
+```
+
+### F. `config.yaml` on this Mac
+
+`config.yaml` is never on GitHub (it has the CVV).
+
+```bash
 cp config.example.yaml config.yaml
 ```
 
-Edit `config.yaml` on **this** machine:
+Open `config.yaml` and set:
 
-- Same **name, street, email, phone, product** as the other PC
-- **CVV is the one field that changes** (that card / that machine)
-- Do not email CVV; do not put it on GitHub
+- `mode: test` for practice
+- `dry_run: true`
+- **`checkout.cvv`** — the 3 digits for the card on **this** machine
 
-Later updates from this Mac (after a push): on the other PC, `git pull`.
+Name, street, email, phone, and product can match the other computer. **CVV is the one field you type on this Mac.** Do not email it. Do not put it on GitHub.
+
+### G. Apple card billing (normal Chrome or Safari, days before launch)
+
+Apple ID → Payment → card **billing** already Vietnam (HCM, quận/phường, no junk postal). Do this days before. The in-checkout billing popup costs ~40 seconds.
+
+### H. Sign in inside the script’s Chrome
+
+```bash
+cd ~/Projects/iphone-launch-sprint
+source .venv/bin/activate
+python assist.py --setup-login
+```
+
+A **new** Chrome window opens. Sign in + 2FA **in that window**. Leave it open. **Never quit Chrome** (no ⌘Q) after this.
+
+If Chrome is already open from everyday use and the script says it cannot start: **⌘Q Chrome once**, then run `--setup-login` again. After that, never quit it.
+
+### I. Warm checkout (same open Chrome)
+
+```bash
+python assist.py --warm-only
+```
+
+Finish checkout 2FA if asked. It adds a practice phone, reaches checkout, **empties the bag**. Chrome stays open.
+
+### J. Practice until it is boring
+
+```bash
+python assist.py --now
+```
+
+It must stop at **Đặt hàng**. You do **not** click Đặt hàng. Do this 2–3 times until it is boring. The second run should click the **saved** shipping radio.
+
+### K. Later updates from this repo
+
+After this Mac pushes a change:
+
+```bash
+cd ~/Projects/iphone-launch-sprint
+git pull
+```
+
+Then activate the venv again before you run anything.
+
+### L. Launch night (same Mac, same open Chrome)
+
+1. In `config.yaml`: `mode: launch` and confirm `launch_at`.
+2. **T−10:** `python assist.py --warm-only` if Chrome is not already warm. Phone in hand. Bag must end empty.
+3. **T−0:** `python assist.py --at-launch`
+4. **You** click Đặt hàng.
+
+---
+
+### If it breaks
+
+| What you see | What you do |
+|---|---|
+| `git: command not found` or `xcode-select` | Step B. Do not continue until `git --version` works. |
+| `Playwright not installed` | `source .venv/bin/activate`, then redo step E. |
+| Clone 404 | Wrong GitHub account. Step C. |
+| Apple ID every run | You quit Chrome. Sign in again (H). Leave it open. |
+| Script sits on sign-in | Finish 2FA in **that** Chrome. It is waiting. |
+
+Windows (PowerShell), only if you are not on a Mac — after clone:
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m playwright install chrome
+copy config.example.yaml config.yaml
+```
 
 ---
 
