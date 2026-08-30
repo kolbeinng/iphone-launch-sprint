@@ -15,7 +15,7 @@ On GitHub, stay on branch **`cursor/dynamic-sku-select`**. Do not click **Compar
 
 Pick **one**. Mac commands do not work on Windows. Windows commands do not work on a Mac.
 
-- **Windows 11 (including RDP):** open **[checklist.md](checklist.md)** → **New Windows 11**. Paste PowerShell **block 1**, then **2**, then **3**.
+- **Windows 11:** open **[checklist.md](checklist.md)** → **New Windows 11**. Paste PowerShell **block 1**, then **2**, then **3**.
 - **Mac:** open **[checklist.md](checklist.md)** → **New Mac**. Start at A.
 
 The script you run is **`assist.py`**. The two commands after setup are `--warm-only` then `--now`.

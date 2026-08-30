@@ -228,8 +228,6 @@ Paste **block 1**. When it finishes, **close PowerShell**. Open a **new** PowerS
 If Windows asks **Yes** (allow changes), click Yes.  
 If Git opens a browser, sign in as **kolbeinng**.
 
-**RDP:** leave with the **X** (Disconnect). Do not Sign out.
-
 ---
 
 ### Block 1 — Chrome, Git, Python
@@ -333,7 +331,7 @@ python assist.py --at-launch
 | `running scripts is disabled` | Block 1 starts with ExecutionPolicy. New PowerShell, then block 3. |
 | `No module named 'yaml'` | Line does not show `(.venv)`. Paste the two-line “new PowerShell” bit, then block 3. |
 | Clone **404** | Sign in to GitHub as **kolbeinng** in Chrome, then block 2 again. |
-| Apple login every time | Chrome was closed or you Signed out. Block 4 again. Leave Chrome open. |
+| Apple login every time | Chrome was closed. Block 4 again. Leave Chrome open. |
 | Script waits on sign-in | Finish 2FA in **that** Chrome window. |
 
 ---
