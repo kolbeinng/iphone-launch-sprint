@@ -15,7 +15,13 @@ The long text on this GitHub page is this file (`README.md`). The Mac A–Z step
 
 ## New Mac
 
-Follow **[checklist.md](checklist.md)** from A to L. That is the only path.
+Follow **[checklist.md](checklist.md)** — **New Mac**. That is the only Mac path.
+
+## New Windows 11
+
+Follow **[checklist.md](checklist.md)** — **New Windows 11**. That is the only Windows path.
+
+On Windows type **`python`** after `(.venv)` — not `python3`.
 
 Do not type `python`. Type **`python3`**.  
 Do not run `launch.py`. The only script is `assist.py`.  
