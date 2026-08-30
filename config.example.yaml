@@ -5,64 +5,55 @@
 dry_run: true   # keep true. Script never clicks Đặt hàng.
 
 # =============================================================================
-# PHONE PICKER — uncomment EXACTLY ONE block below
+# PHONE PICKER — change ONLY this line on launch night
 # =============================================================================
 #
-# TODAY  = TEST (iPhone 17 Pro Max) is ON. LAUNCH is all comments.
+#   mode: test    → iPhone 17 Pro Max (practice, live now)
+#   mode: launch  → iPhone 18 Pro Max (launch night)
 #
-# LAUNCH NIGHT — do this, in order:
-#   1) Comment out EVERY line in "TEST — iPhone 17"  (put # in front)
-#   2) Uncomment EVERY line in "LAUNCH — iPhone 18" (delete the # and the space)
-#   3) Confirm launch_at below when Apple announces VN time
+# Both blocks stay uncommented. Confirm launch_at when Apple announces VN time.
 # =============================================================================
 
+mode: test
 
-# -----------------------------------------------------------------------------
-# TEST — iPhone 17 Pro Max  (LIVE now — for dry-runs)
-# -----------------------------------------------------------------------------
-target:
-  year: 17
-  model: pro-max
-label: "TEST iPhone 17 Pro Max 256GB Cam Vũ Trụ"
-family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17-pro"
-family_urls:
-  - "https://www.apple.com/vn/shop/buy-iphone/iphone-17-pro"
-family_match: ["17", "Pro Max"]
-product_prefs:
-  screensizes: ["6,9", "6.9", "6_9inch", "6_9"]
-  colors:
-    - "Cam Vũ Trụ"
-    - "cosmicorange"
-    - "re:cam|orange|cosmic"
-  on_miss: wait_user
-  user_pick_timeout_sec: 20
-  allow_failover: false
-  storages: ["256GB", "256gb", "256", "re:256"]
+test:
+  target:
+    year: 17
+    model: pro-max
+  label: "TEST iPhone 17 Pro Max 256GB Cam Vũ Trụ"
+  family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17-pro"
+  family_match: ["17", "Pro Max"]
+  product_prefs:
+    screensizes: ["Pro Max", "6,9", "6.9", "6_9inch", "6_9"]
+    colors:
+      - "Cam Vũ Trụ"
+      - "cosmicorange"
+      - "re:cam|orange|cosmic"
+    on_miss: wait_user
+    user_pick_timeout_sec: 20
+    allow_failover: false
+    storages: ["256GB", "256gb", "256", "re:256"]
 
-
-# -----------------------------------------------------------------------------
-# LAUNCH — iPhone 18 Pro Max  (commented until launch night)
 # Fold is NOT listed — not expected on apple.com/vn.
-# -----------------------------------------------------------------------------
-# target:
-#   year: 18
-#   model: pro-max
-# label: "iPhone 18 Pro Max 256GB Cam Vũ Trụ"
-# family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro"
-# family_urls:
-#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro"
-#   - "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro-max"
-# family_match: ["18", "Pro Max"]
-# product_prefs:
-#   screensizes: ["6,9", "6.9", "6_9inch", "6_9"]
-#   colors:
-#     - "Cam Vũ Trụ"
-#     - "cosmicorange"
-#     - "re:cam|orange|cosmic"
-#   on_miss: wait_user
-#   user_pick_timeout_sec: 20
-#   allow_failover: false
-#   storages: ["256GB", "256gb", "256", "re:256"]
+launch:
+  target:
+    year: 18
+    model: pro-max
+  label: "iPhone 18 Pro Max 256GB Cam Vũ Trụ"
+  family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro"
+  family_urls:
+    - "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro-max"
+  family_match: ["18", "Pro Max"]
+  product_prefs:
+    screensizes: ["Pro Max", "6,9", "6.9", "6_9inch", "6_9"]
+    colors:
+      - "Cam Vũ Trụ"
+      - "cosmicorange"
+      - "re:cam|orange|cosmic"
+    on_miss: wait_user
+    user_pick_timeout_sec: 20
+    allow_failover: false
+    storages: ["256GB", "256gb", "256", "re:256"]
 
 
 # =============================================================================

@@ -921,10 +921,16 @@ def _hub_link_forbidden_reason(link: dict, *, year: str) -> str | None:
 
 def load_order_target(cfg: dict) -> dict:
     raw = cfg.get("target") if isinstance(cfg.get("target"), dict) else {}
-    year = str(raw.get("year") or "18").strip()
-    model = str(raw.get("model") or "pro-max").strip().lower().replace(" ", "-")
+    year = str(raw.get("year") or "").strip()
+    model = str(raw.get("model") or "").strip().lower().replace(" ", "-")
     if model in ("promax", "pro_max"):
         model = "pro-max"
+    if not year:
+        raise ConfigError(
+            "config target.year is required (17 for TEST, 18 for LAUNCH)."
+        )
+    if not model:
+        raise ConfigError("config target.model is required (pro-max).")
     return {"year": year, "model": model}
 
 
@@ -948,7 +954,7 @@ def _buy_page_snapshot(page) -> dict:
 
 def assert_family_is_order_target(page, target: dict) -> None:
     """Hard stop before trade-in if this is 17 / Fold / Air / wrong year."""
-    year = str(target.get("year") or "18")
+    year = str(target.get("year") or "")
     snap = _buy_page_snapshot(page)
     url = (snap.get("url") or page.url or "").lower()
     h1 = str(snap.get("h1") or "")
@@ -1093,10 +1099,12 @@ def wait_family_configure_ready(
             idx += 1
             t_round = time.perf_counter()
             try:
-                if urlparse(page.url).path.rstrip("/") != urlparse(url).path.rstrip("/"):
+                already = (
+                    urlparse(page.url).path.rstrip("/")
+                    == urlparse(url).path.rstrip("/")
+                )
+                if not already:
                     goto_resilient(page, url)
-                else:
-                    page.reload(wait_until="domcontentloaded", timeout=30_000)
             except Exception as exc:  # noqa: BLE001
                 log(f"FAMILY A  nav issue: {exc}")
                 page.wait_for_timeout(poll_ms)
@@ -1144,7 +1152,7 @@ def wait_family_configure_ready(
                 else "(none)"
             )
         )
-        year = str((target or {}).get("year") or "18")
+        year = str((target or {}).get("year") or "")
         matched = [x for x in links if _hub_link_matches(x, match_tokens)]
         dropped = []
         kept = []
@@ -1320,8 +1328,6 @@ def _wait_capacity_cascade_ready(page, *, timeout_ms: int = 10_000) -> float:
         }""",
         timeout=timeout_ms,
     )
-    # Give BFE a beat to bind Trade In to the next storage click.
-    page.wait_for_timeout(150)
     return (time.perf_counter() - t0) * 1000
 
 
@@ -1475,7 +1481,7 @@ def select_product_dimensions(
         _select_dimension_by_prefs(
             page,
             "dimensionScreensize",
-            screensizes or ["6.3", "6,3", "6_3"],
+            screensizes or ["Pro Max", "6,9", "6.9", "6_9inch", "6_9"],
             mark="0d screensize",
             **dim_kwargs,
         )
@@ -2085,49 +2091,34 @@ def click_xem_gio_hang_now(page, timer: StageTimer | None = None) -> None:
 
 
 def _bag_quantity_select_info(page) -> dict:
-    """Find the bag line-item quantity <select> (Apple VN: Số lượng)."""
+    """Find real bag line-item quantity dropdowns (not footer stubs)."""
     try:
         info = page.evaluate(
             """() => {
-              const selects = Array.from(document.querySelectorAll('select'));
-              const scored = selects.map((el) => {
-                const autom = el.getAttribute('data-autom') || '';
-                const name = el.name || '';
-                const id = el.id || '';
-                const aria = el.getAttribute('aria-label') || '';
-                const lab = (el.labels && el.labels[0]
-                  ? el.labels[0].innerText : '') || '';
-                const near = ((el.closest('.rs-item-quantity, .rs-bag-item, li, div')
-                  || el.parentElement || {}).innerText || '').slice(0, 120);
-                const hay = (autom + ' ' + name + ' ' + id + ' ' + aria
-                  + ' ' + lab + ' ' + near).toLowerCase();
-                const opts = Array.from(el.options).map((o) => String(o.value));
-                const numeric = opts.length > 0 && opts.every((v) => /^\\d+$/.test(v));
-                let score = 0;
-                if (/quant|qty|số lượng|so luong/.test(hay)) score += 10;
-                if (/item-quantity|bag-item-quantity|quantity-dropdown/.test(autom)) {
-                  score += 8;
-                }
-                if (numeric && opts.length <= 20) score += 3;
-                return {
-                  autom, name, id, value: String(el.value || ''),
-                  options: opts, score, disabled: !!el.disabled,
-                };
-              }).filter((x) => x.score >= 10 || (
-                x.options.length >= 1 && x.options.length <= 12
-                && x.options.every((v) => /^\\d+$/.test(v))
-              ));
-              scored.sort((a, b) => b.score - a.score);
+              const real = Array.from(document.querySelectorAll('select'))
+                .map((el) => {
+                  const autom = el.getAttribute('data-autom') || '';
+                  const id = el.id || '';
+                  const opts = Array.from(el.options).map((o) => String(o.value));
+                  const numeric = opts.length >= 2
+                    && opts.every((v) => /^\\d+$/.test(v));
+                  const isQty = /quantity/i.test(autom + ' ' + id);
+                  return {
+                    autom, id, value: String(el.value || ''),
+                    options: opts, ok: numeric && isQty,
+                  };
+                })
+                .filter((x) => x.ok);
               return {
-                found: scored[0] || null,
-                n: scored.length,
-                all: scored.slice(0, 4),
+                found: real[0] || null,
+                n: real.length,
+                all: real.slice(0, 6),
               };
             }"""
         )
         return info if isinstance(info, dict) else {}
     except Exception as exc:  # noqa: BLE001
-        return {"found": None, "error": str(exc)}
+        return {"found": None, "n": 0, "error": str(exc)}
 
 
 def _checkout_quantity(checkout_cfg: dict | None) -> int:
@@ -2154,6 +2145,12 @@ def set_bag_quantity(page, quantity: int, *, timer: StageTimer | None = None) ->
     )
     info = _bag_quantity_select_info(page)
     found = info.get("found") if isinstance(info, dict) else None
+    n_real = int((info or {}).get("n") or 0)
+    if n_real > 1:
+        raise RuntimeError(
+            f"Bag has {n_real} line-item quantity dropdowns (leftover items). "
+            "Empty the bag and re-run so quantity applies to the SKU just added."
+        )
     if not found:
         if want == 1:
             log("Bag quantity control not found — leaving Apple default 1")
@@ -2180,10 +2177,10 @@ def set_bag_quantity(page, quantity: int, *, timer: StageTimer | None = None) ->
             f"checkout.quantity={want} is not in Apple's bag dropdown {options}. "
             "iPhone is often capped at 2."
         )
-    if found.get("autom"):
-        css = f'select[data-autom="{found["autom"]}"]'
-    elif found.get("id"):
+    if found.get("id"):
         css = f'select[id="{found["id"]}"]'
+    elif found.get("autom"):
+        css = f'select[data-autom="{found["autom"]}"]'
     else:
         css = 'select[name="quantity"]'
     loc = page.locator(css).first
@@ -3035,7 +3032,7 @@ def _click_review_and_stop_at_place_order(
                   });
                 }""",
                 label=f"Apple hop Review→Đặt hàng (attempt {attempt + 1})",
-                timeout_ms=20_000,
+                timeout_ms=5_000 if attempt == 0 else 15_000,
                 snapshot_js=_SNAP_CHECKOUT,
             )
             review_ok = True
@@ -3177,15 +3174,14 @@ def _bag_is_empty(page) -> bool:
         return False
 
 
-def empty_bag(page, *, max_rounds: int = 12) -> None:
+def empty_bag(page, *, max_rounds: int = 12, reason: str = "start clean") -> None:
     """Remove every line item from /vn/shop/bag so the timed run starts clean."""
     goto_resilient(page, "https://www.apple.com/vn/shop/bag")
-    page.wait_for_timeout(400)
     if _bag_is_empty(page):
         log("Bag already empty")
         return
 
-    log("Emptying bag after SSO warm…")
+    log(f"Emptying bag ({reason})…")
     for round_i in range(1, max_rounds + 1):
         if _bag_is_empty(page):
             break
@@ -3244,7 +3240,7 @@ def empty_bag(page, *, max_rounds: int = 12) -> None:
             log("Bag looks clear (no checkout button)")
         else:
             raise RuntimeError(
-                "Could not empty bag after SSO warm — remove items manually, then re-run"
+                "Could not empty bag — remove items manually, then re-run"
             )
 
 
@@ -3290,7 +3286,7 @@ def warm_checkout_sso(
     t0 = time.perf_counter()
 
     # Start clean so we don't stack leftovers from prior practice
-    empty_bag(page)
+    empty_bag(page, reason="SSO warm start")
 
     log("Adding practice iPhone for SSO warm…")
     _add_product_to_bag_untimed(
@@ -3342,7 +3338,7 @@ def warm_checkout_sso(
     log(f"Checkout SSO cookies warm OK in {ms:.0f}ms → {page.url} (_s={step})")
 
     # Critical: leave basket empty for the real timed run
-    empty_bag(page)
+    empty_bag(page, reason="SSO warm done")
     log("SSO warm complete — bag empty, secure-store session kept. Ready for T-0.")
 
 
@@ -4548,11 +4544,18 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(family_urls_cfg, list):
             family_urls_cfg = []
         family_candidates = []
+        seen_family: set[str] = set()
         if family_url:
             family_candidates.append(family_url)
+            seen_family.add(family_url.rstrip("/"))
         for u in family_urls_cfg:
             if isinstance(u, str) and u.strip():
-                family_candidates.append(validate_store_url(u.strip(), "family_urls"))
+                vu = validate_store_url(u.strip(), "family_urls")
+                key = vu.rstrip("/")
+                if key in seen_family:
+                    continue
+                family_candidates.append(vu)
+                seen_family.add(key)
         hub_raw = (cfg.get("family_hub_url") or "https://www.apple.com/vn/shop/buy-iphone/").strip()
         family_hub_url = validate_store_url(hub_raw, "family_hub_url") if hub_raw else ""
         family_match_cfg = cfg.get("family_match") or []
@@ -4595,7 +4598,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         log(
             f"TEST MODE: iPhone {target['year']} {target['model']} "
-            "(LAUNCH block still commented in config.yaml)"
+            "(config mode: test — set mode: launch on launch night)"
         )
     log(f"Persistent profile: {PROFILE_DIR}")
     log("Warm Chrome via CDP — we DISCONNECT only, never quit Chrome (keeps SSO / skips 2FA).")
@@ -4701,6 +4704,8 @@ def main(argv: list[str] | None = None) -> int:
                     )
 
                 timer = StageTimer()
+                empty_bag(page, reason="timed run")
+                timer.mark("0 empty bag", kind="nav")
                 if use_dynamic:
                     candidates = list(family_candidates)
                     if not candidates:

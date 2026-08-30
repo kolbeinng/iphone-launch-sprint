@@ -189,6 +189,40 @@ def disconnect_assist_browser(browser, meta: dict | None = None) -> None:
     log("Disconnected from Chrome — browser LEFT OPEN (session warm).")
 
 
+_RUN_MODES = ("test", "launch")
+_PHONE_PICKER_KEYS = (
+    "target",
+    "label",
+    "family_url",
+    "family_urls",
+    "family_match",
+    "product_prefs",
+)
+
+
+def apply_run_mode(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Lift config.test or config.launch onto the root. Fail if mode is missing."""
+    mode = str(cfg.get("mode") or "").strip().lower()
+    if mode not in _RUN_MODES:
+        raise ConfigError(
+            "config mode must be 'test' or 'launch'.\n"
+            "  mode: test    # practice on live iPhone 17\n"
+            "  mode: launch  # iPhone 18 Pro Max on launch night"
+        )
+    block = cfg.get(mode)
+    if not isinstance(block, dict) or not block:
+        raise ConfigError(f"config.{mode} block is missing or empty.")
+    out = dict(cfg)
+    for key in _PHONE_PICKER_KEYS:
+        if key in block:
+            out[key] = block[key]
+        else:
+            out.pop(key, None)
+    out["_mode"] = mode
+    log(f"MODE  {mode} — using config.{mode} phone picker")
+    return out
+
+
 def load_config(path: Path | None = None) -> dict[str, Any]:
     config_path = path or DEFAULT_CONFIG
     if not config_path.exists():
@@ -200,7 +234,7 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
         data = yaml.safe_load(fh) or {}
     if not isinstance(data, dict):
         raise ConfigError("Config root must be a mapping")
-    return data
+    return apply_run_mode(data)
 
 
 def require_dry_run(cfg: dict[str, Any]) -> None:

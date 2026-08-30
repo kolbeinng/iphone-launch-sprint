@@ -4,15 +4,14 @@ Scripts never enter your Apple password and never click **Đặt hàng**.
 
 ## What this orders
 
-**TEST (on now in config.yaml):** iPhone 17 Pro Max · 6.9" · 256GB · Cam Vũ Trụ — dry-runs.
+**TEST (`mode: test` now):** iPhone 17 Pro Max · 6.9" · 256GB · Cam Vũ Trụ — dry-runs.
 
-**LAUNCH (commented out):** iPhone 18 Pro Max. Fold is not listed.
+**LAUNCH (`mode: launch`):** iPhone 18 Pro Max. Fold is not listed.
 
-Switch in `config.yaml` only — no code changes:
+Switch in `config.yaml` only — one line, no commenting:
 
-1. Comment out the whole **TEST — iPhone 17** block
-2. Uncomment the whole **LAUNCH — iPhone 18** block
-3. Confirm `launch_at`
+1. Set `mode: launch`
+2. Confirm `launch_at`
 
 `--warm-only` always uses a live iPhone 17 link to stay signed in, then **empties the bag**. That is not the order.
 
@@ -132,7 +131,7 @@ We only open the city/quận editor if the label is **not** already HCM (wrong c
 
 ## Night-before extras
 
-- [ ] Phone picker: **LAUNCH** uncommented, **TEST** commented (`target.year: 18`)
+- [ ] Phone picker: `mode: launch` in `config.yaml` (both `test:` and `launch:` blocks stay as-is)
 - [ ] `checkout.cvv` is the card on **this** machine
 - [ ] `dry_run: true` until you are ready to click Đặt hàng yourself
 - [ ] Alarm `Asia/Ho_Chi_Minh`; notifications on; Focus / DND off
