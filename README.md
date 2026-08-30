@@ -48,8 +48,9 @@ cd iphone-launch-sprint
 git checkout cursor/dynamic-sku-select
 ```
 
+The repo is **private**. Clone still works. Git will open a browser — sign in as **kolbeinng**.  
 `git` and `python3` must print a version. If they do not, block 1 is not finished.  
-If clone says **404**, sign in to github.com as **kolbeinng** in Chrome, then run the `git clone` lines again.
+If clone says **404**, you signed in as the wrong GitHub account. Sign in as **kolbeinng**, then run the `git clone` lines again.
 
 ### Block 3 — packages + config
 
@@ -135,8 +136,9 @@ cd iphone-launch-sprint
 git checkout cursor/dynamic-sku-select
 ```
 
+The repo is **private**. Clone still works. Git will open a browser — sign in as **kolbeinng**.  
 `git` and `py -3` must print a version.  
-If clone says **404**, sign in to github.com as **kolbeinng** in Chrome, then run the `git clone` lines again.
+If clone says **404**, you signed in as the wrong GitHub account. Sign in as **kolbeinng**, then run the `git clone` lines again.
 
 ### Block 3 — packages + config
 
