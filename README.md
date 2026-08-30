@@ -26,7 +26,6 @@ After step E in the checklist, every command is:
 ```bash
 cd ~/Projects/iphone-launch-sprint
 source .venv/bin/activate
-python3 assist.py --setup-login
 python3 assist.py --warm-only
 python3 assist.py --now
 ```

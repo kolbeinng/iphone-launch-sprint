@@ -159,28 +159,23 @@ Name, street, email, phone, and product can match the other computer. **CVV is t
 
 Apple ID → Payment → card **billing** already Vietnam (HCM, quận/phường, no junk postal). Do this days before. The in-checkout billing popup costs ~40 seconds.
 
-### H. Sign in inside the script’s Chrome
+### H. `--warm-only` (first Chrome and every later warm)
+
+This is the only warm command. Do not run `--setup-login`.
 
 ```bash
 cd ~/Projects/iphone-launch-sprint
 source .venv/bin/activate
-python3 assist.py --setup-login
-```
-
-A **new** Chrome window opens. Sign in + 2FA **in that window**. Leave it open. **Never quit Chrome** (no ⌘Q) after this.
-
-If Chrome is already open from everyday use and the script says it cannot start: **⌘Q Chrome once**, then run `--setup-login` again. After that, never quit it.
-
-### I. Warm checkout (same open Chrome)
-
-```bash
-source .venv/bin/activate
 python3 assist.py --warm-only
 ```
 
-Finish checkout 2FA if asked. It adds a practice phone, reaches checkout, **empties the bag**. Chrome stays open.
+A Chrome window opens (new the first time). Sign in + 2FA **in that window** if Apple asks. It then adds a practice phone, reaches checkout, **empties the bag**. Leave Chrome open. **Never quit Chrome** (no ⌘Q).
 
-### J. Practice until it is boring
+If everyday Chrome is already open and the script cannot start: **⌘Q Chrome once**, then run `--warm-only` again. After that, never quit it.
+
+Later, same open Chrome: run `--warm-only` again. You should not get a password box.
+
+### I. Practice until it is boring
 
 ```bash
 source .venv/bin/activate
@@ -239,11 +234,9 @@ Do this on **the computer you will use at T-0**. Practice on another machine doe
 
 1. Clone + `config.yaml` as above.
 2. In a normal browser: Apple ID → Payment → card **billing** already correct (Vietnam quận/phường, no junk postal). Not at T-0 (popup ~40s).
-3. `source .venv/bin/activate` then `python3 assist.py --setup-login`  
-   Sign in + 2FA in the **script’s Chrome** (not everyday Chrome). Leave that window open. Never ⌘Q / quit Chrome after this.
-4. `python3 assist.py --warm-only`  
-   Second login: **checkout** SSO. 2FA again if asked. Adds a practice iPhone, reaches checkout, **empties the bag**. Leave Chrome open.
-5. `python3 assist.py --now`  
+3. `source .venv/bin/activate` then `python3 assist.py --warm-only`  
+   Sign in + 2FA in the **script’s Chrome** if asked (not everyday Chrome). Adds a practice iPhone, reaches checkout, **empties the bag**. Leave that window open. Never ⌘Q.
+4. `python3 assist.py --now`  
    Full dry-run → stop at Đặt hàng (not clicked). Repeat until it is boring (2–3 clean runs). Second run should select the saved shipping radio, not type a new address.
 
 The script always applies `shipping_address` from config:
