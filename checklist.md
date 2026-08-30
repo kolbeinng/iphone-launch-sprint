@@ -222,98 +222,36 @@ Then `source .venv/bin/activate` and `python3` again.
 
 ## New Windows 11 — start here on a blank PC
 
-You are on the Windows computer (RDP is OK). Do A, then B, then C… in order.  
-If you already have Chrome / Git / Python, still run the **check** command in that step. If it works, skip the install and go to the next letter.
+Click **Start**, type `PowerShell`, open **Windows PowerShell**.  
+Paste **block 1**. When it finishes, **close PowerShell**. Open a **new** PowerShell. Paste **block 2**, then **block 3**.
 
-**RDP:** when you walk away, click the **X** to disconnect. Do not click **Sign out** or **Log off**. Sign out closes Chrome and you must sign in to Apple again.
+If Windows asks **Yes** (allow changes), click Yes.  
+If Git opens a browser, sign in as **kolbeinng**.
 
----
-
-### A. Install Google Chrome
-
-Windows already has **Microsoft Edge**. Use Edge only to download Chrome. The script needs Chrome.
-
-1. Click **Start**, type `Edge`, open **Microsoft Edge**.
-2. Click the address bar at the top. Type this and press Enter:
-
-   https://www.google.com/chrome/
-
-3. Click **Download Chrome**. Accept the terms if it asks.
-4. When the file finishes, click it in the download bar (or open **File Explorer → Downloads → ChromeSetup.exe**).
-5. If Windows says **Do you want to allow this app to make changes?** click **Yes**.
-6. Wait until **Google Chrome** opens by itself. You can close Edge.
-
-If Chrome is already installed: Start → type `Chrome` → if **Google Chrome** is there, go to B.
+**RDP:** leave with the **X** (Disconnect). Do not Sign out.
 
 ---
 
-### B. Install Git
+### Block 1 — Chrome, Git, Python
 
-1. In **Chrome**, click the address bar. Type this and press Enter:
-
-   https://git-scm.com/download/win
-
-2. The 64-bit installer starts downloading. Open the file when it finishes (`Git-…-64-bit.exe` in Downloads).
-3. Click **Yes** if Windows asks for permission.
-4. Click **Next** on every screen. Leave the defaults. Click **Install**, then **Finish**.
-
----
-
-### C. Install Python
-
-1. In **Chrome**, go to:
-
-   https://www.python.org/downloads/windows/
-
-2. Click the **Windows installer (64-bit)** for Python 3.12 (or the big yellow Download button if it is 3.12).
-3. Open the downloaded file (`python-3.12.…-amd64.exe`).
-4. Click **Yes** if Windows asks.
-5. On the **first** screen, at the bottom, tick **Add python.exe to PATH**.  
-   Then click **Install Now**.
-6. If you see **Disable path length limit**, click that too.
-7. Click **Close**.
-
----
-
-### D. Open PowerShell and turn on scripts
-
-1. Click **Start**, type `PowerShell`, open **Windows PowerShell**.
-2. Copy this line, paste it, press Enter:
+Paste this whole block. Press Enter. Wait until it finishes (a few minutes).
 
 ```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force
+winget install --id Google.Chrome -e --accept-package-agreements --accept-source-agreements
+winget install --id Git.Git -e --accept-package-agreements --accept-source-agreements
+winget install --id Python.Python.3.12 -e --accept-package-agreements --accept-source-agreements
 ```
 
-3. If it asks `[Y] Yes`, type `Y` and press Enter.
+Close this PowerShell window. Open a **new** one.
 
-Close that PowerShell window. Open a **new** Windows PowerShell. Then paste these two lines, one at a time:
+---
+
+### Block 2 — check, then download the project
 
 ```powershell
 git --version
 py -3 --version
-```
-
-You should see a version number for both.  
-If `git` fails → redo B, then open a **new** PowerShell.  
-If `py -3` fails → redo C, and make sure **Add python.exe to PATH** is ticked, then a **new** PowerShell.
-
----
-
-### E. Sign in to GitHub
-
-The project is private.
-
-1. In **Chrome**, go to https://github.com and sign in as **kolbeinng**.
-2. Open: https://github.com/kolbeinng/iphone-launch-sprint  
-3. If you see **404**, you are on the wrong GitHub account. Stop and fix that before F.
-
----
-
-### F. Download the project
-
-In the **new** PowerShell from D:
-
-```powershell
 cd $env:USERPROFILE
 mkdir Projects -ErrorAction SilentlyContinue
 cd Projects
@@ -322,98 +260,66 @@ cd iphone-launch-sprint
 git checkout cursor/dynamic-sku-select
 ```
 
-If a browser window asks you to log in to GitHub, use **kolbeinng**.
+`git` and `py -3` must print a version. If they do not, block 1 did not finish — open a new PowerShell and run block 1 again.
+
+If clone says **404**, open Chrome, sign in to github.com as **kolbeinng**, then run the `git clone` lines again.
 
 ---
 
-### G. Install the script packages
-
-You must still be in the `iphone-launch-sprint` folder. Paste these lines one block at a time:
+### Block 3 — packages + config
 
 ```powershell
+cd $env:USERPROFILE\Projects\iphone-launch-sprint
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-```
-
-Look at the start of the line. It must say `(.venv)`. If it does not, stop. Redo D, then this step.
-
-Then:
-
-```powershell
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 python -m playwright install chrome
 python -c "from playwright.sync_api import sync_playwright; print('playwright ok')"
-```
-
-The last line must print `playwright ok`.
-
-From now on, **every time you open a new PowerShell**, do this first:
-
-```powershell
-cd $env:USERPROFILE\Projects\iphone-launch-sprint
-.\.venv\Scripts\Activate.ps1
-```
-
-Wait until you see `(.venv)`. Then the command is `python assist.py …` (the word `python`, not `python3`).
-
----
-
-### H. Create your local config
-
-```powershell
 copy config.example.yaml config.yaml
+notepad config.yaml
 ```
 
-Open `config.yaml` in Notepad (File Explorer → that file → right-click → Edit). Set:
-
-- `mode: test`
-- `dry_run: true`
-- `checkout.cvv` — the 3 digits for the card on **this** PC
-
-Save the file. Do not email the CVV.
+The line must start with `(.venv)`. The check must print `playwright ok`.  
+In Notepad: keep `mode: test`, keep `dry_run: true`, type `checkout.cvv`, Save, close Notepad.
 
 ---
 
-### I. Apple card billing (do this days before launch)
-
-In Chrome: Apple ID → Payment → the card **billing address** is already Vietnam (HCM, quận/phường). Not at T−0.
-
----
-
-### J. Warm (sign-in + checkout)
+### Block 4 — warm, then practice
 
 ```powershell
-cd $env:USERPROFILE\Projects\iphone-launch-sprint
-.\.venv\Scripts\Activate.ps1
 python assist.py --warm-only
 ```
 
-A Chrome window opens. If Apple asks, sign in and finish 2FA **in that window** (phone in your hand).  
-The script adds a practice phone, goes to checkout, then **empties the bag**.
+Sign in + 2FA in **that** Chrome if Apple asks. Leave Chrome open. Bag must end empty.
 
-**Leave that Chrome window open.** Do not close it. Do not Sign out of Windows.
-
----
-
-### K. Practice dry-run
-
-Same PowerShell, `(.venv)` still showing:
+Then:
 
 ```powershell
 python assist.py --now
 ```
 
-It stops at **Đặt hàng**. You do **not** click Đặt hàng. Run this 2–3 times until it is boring.
+Stops at **Đặt hàng**. Do not click it.
+
+If you opened a **new** PowerShell, paste this first (wait for `(.venv)`):
+
+```powershell
+cd $env:USERPROFILE\Projects\iphone-launch-sprint
+.\.venv\Scripts\Activate.ps1
+```
 
 ---
 
-### L. Launch night (this same PC, same open Chrome)
+### Launch night (same PC, same open Chrome)
 
-1. In `config.yaml` set `mode: launch` and check `launch_at`.
-2. **T−10:** `python assist.py --warm-only` if Chrome is not already warm. Bag must end empty.
-3. **T−0:** `python assist.py --at-launch`
-4. **You** click Đặt hàng.
+In `config.yaml` set `mode: launch` and check `launch_at`.
+
+```powershell
+python assist.py --warm-only
+python assist.py --at-launch
+```
+
+**You** click Đặt hàng.
 
 ---
 
@@ -421,14 +327,14 @@ It stops at **Đặt hàng**. You do **not** click Đặt hàng. Run this 2–3 
 
 | What you see | What you do |
 |---|---|
-| `python3` is not recognized | Use `python` (Windows). You are looking at a Mac line. |
-| `python` is not recognized | Step C, tick **Add python.exe to PATH**, new PowerShell, step G again. |
-| `git` is not recognized | Step B, new PowerShell. |
-| `running scripts is disabled` | Step D, then new PowerShell, then G. |
-| `No module named 'yaml'` | The line does not show `(.venv)`. Run the two lines at the end of G. |
-| Clone **404** | Wrong GitHub account. Step E. |
-| Apple login every time | You closed Chrome or Signed out. Do J again. Leave Chrome open. |
-| Script waits on sign-in | Finish 2FA in **that** Chrome window. It is waiting for you. |
+| `python3` is not recognized | Use `python` (Windows). |
+| `python` or `git` is not recognized | Block 1, then a **new** PowerShell, then block 2. |
+| `winget` is not recognized | Windows 11 is missing App Installer. Microsoft Store → App Installer → Install, then block 1 again. |
+| `running scripts is disabled` | Block 1 starts with ExecutionPolicy. New PowerShell, then block 3. |
+| `No module named 'yaml'` | Line does not show `(.venv)`. Paste the two-line “new PowerShell” bit, then block 3. |
+| Clone **404** | Sign in to GitHub as **kolbeinng** in Chrome, then block 2 again. |
+| Apple login every time | Chrome was closed or you Signed out. Block 4 again. Leave Chrome open. |
+| Script waits on sign-in | Finish 2FA in **that** Chrome window. |
 
 ---
 
