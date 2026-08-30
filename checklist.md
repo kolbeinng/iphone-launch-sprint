@@ -186,7 +186,7 @@ python3 assist.py --now
 
 It must stop at **Đặt hàng**. You do **not** click Đặt hàng. Do this 2–3 times until it is boring. The second run should click the **saved** shipping radio.
 
-### K. Later updates from this repo
+### J. Later updates from this repo
 
 After this Mac pushes a change:
 
@@ -197,7 +197,7 @@ git pull
 
 Then `source .venv/bin/activate` and `python3` again.
 
-### L. Launch night (same Mac, same open Chrome)
+### K. Launch night (same Mac, same open Chrome)
 
 1. In `config.yaml`: `mode: launch` and confirm `launch_at`.
 2. **T−10:** `source .venv/bin/activate` then `python3 assist.py --warm-only` if Chrome is not already warm. Phone in hand. Bag must end empty.
@@ -336,33 +336,29 @@ python assist.py --at-launch
 
 ---
 
-## Per-computer setup (once, days before — not at 18:50)
+## After setup (any computer)
 
 Do this on **the computer you will use at T-0**. Practice on another machine does not count.
 
-1. Clone + `config.yaml` as above.
-2. In a normal browser: Apple ID → Payment → card **billing** already correct (Vietnam quận/phường, no junk postal). Not at T-0 (popup ~40s).
-3. `source .venv/bin/activate` then `python3 assist.py --warm-only`  
-   Sign in + 2FA in the **script’s Chrome** if asked (not everyday Chrome). Adds a practice iPhone, reaches checkout, **empties the bag**. Leave that window open. Never ⌘Q.
-4. `python3 assist.py --now`  
-   Full dry-run → stop at Đặt hàng (not clicked). Repeat until it is boring (2–3 clean runs). Second run should select the saved shipping radio, not type a new address.
+1. `config.yaml` exists on that machine. CVV is filled. `mode: test` for practice.
+2. Apple ID → Payment → card **billing** already Vietnam (HCM, quận/phường). Not at T-0.
+3. `--warm-only` — sign in + 2FA in the **script’s Chrome** if asked. Bag ends empty. Leave Chrome open.
+4. `--now` — stop at Đặt hàng (not clicked). Repeat until it is boring. Second run should click the saved shipping radio.
 
 The script always applies `shipping_address` from config:
 
 - If Apple already shows a saved radio whose **visible name + street** match → click it (~20ms).
-- If not → fill **Sử dụng địa chỉ mới** from the same config (slower, still the right address).
-
-Same Apple ID on a new computer: after login, the saved address usually appears by itself.
+- If not → fill **Sử dụng địa chỉ mới** from the same config.
 
 ---
 
 ## Launch day (same computer, same open Chrome)
 
-- **T−10:** `source .venv/bin/activate` then `python3 assist.py --warm-only` if Chrome isn’t already warm. 2FA phone in hand. Bag must end empty.
-- **T−0:** `python3 assist.py --at-launch` (sleeps until `launch_at`). Do not add extra seconds after 19:00.
+- **T−10:** `--warm-only` if Chrome isn’t already warm. 2FA phone in hand. Bag must end empty.
+- **T−0:** `--at-launch` (sleeps until `launch_at`). Do not add extra seconds after 19:00.
 - **You** click Đặt hàng.
 
-`--now` = same product path as launch, no clock. `--at-launch` = waits until `launch_at`. Don’t quit Chrome between warm and sprint.
+`--now` = same product path, no clock. `--at-launch` = waits until `launch_at`. Do not quit Chrome between warm and sprint.
 
 Keep `warm_product_url` on a **live iPhone 17** link. Keep `dry_run: true`. Confirm `launch_at` when Apple announces the VN time.
 
