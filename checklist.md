@@ -47,10 +47,11 @@ Repo (private, your account): https://github.com/kolbeinng/iphone-launch-sprint
 
 This is the only path. Do not skip a letter. Do not install Homebrew. Do not use Safari. Do not use Cursor or any AI for this.
 
-**Never type `python`.** A Mac does not have that command. You will get `zsh: command not found: python`.  
-**Never run `launch.py`.** That is the old script. The only command is `assist.py`.
+**Never type `python`.** A Mac does not have that command. Type **`python3`**.  
+**Never run `launch.py`.** The only script is `assist.py`.  
+**Never run `python3 assist.py` until the line in Terminal starts with `(.venv)`.** That is why you got `No module named 'yaml'`.
 
-The three failures that stop people: **Command Line Tools never installed**, **typed `python` instead of `.venv/bin/python`**, and **Playwright installed in the wrong Python**.
+The two failures that stop people: **Command Line Tools never installed**, and **`python3` without `source .venv/bin/activate`**.
 
 ### A. Google Chrome
 
@@ -105,32 +106,38 @@ git checkout cursor/dynamic-sku-select
 
 ### E. Python environment + Playwright (this is the step people skip)
 
-Stay in `~/Projects/iphone-launch-sprint`. Run **exactly** these lines, in this order:
+Stay in the project folder. Run **exactly** these lines, in this order:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m playwright install chrome
+source .venv/bin/activate
+python3 -m pip install --upgrade pip
+python3 -m pip install -r requirements.txt
+python3 -m playwright install chrome
 ```
 
-Do not type `pip` or `playwright` or `python` alone. Always `.venv/bin/python`.
+The Terminal line **must** start with `(.venv)` after `source`. If it does not, stop — step E failed.
 
 Prove it worked:
 
 ```bash
-.venv/bin/python -c "from playwright.sync_api import sync_playwright; print('playwright ok')"
+python3 -c "from playwright.sync_api import sync_playwright; print('playwright ok')"
 ```
 
 You must see `playwright ok`. If that line fails, redo step E. Do not continue.
 
-**Every new Terminal window**, the first two lines are always:
+**Every new Terminal window**, before any `assist.py` command:
 
 ```bash
 cd ~/Projects/iphone-launch-sprint
+source .venv/bin/activate
 ```
 
-Then the command, always with `.venv/bin/python` — you do not need `source` or activate.
+Wait until you see `(.venv)`, then:
+
+```bash
+python3 assist.py --now
+```
 
 ### F. `config.yaml` on this Mac
 
@@ -156,7 +163,8 @@ Apple ID → Payment → card **billing** already Vietnam (HCM, quận/phường
 
 ```bash
 cd ~/Projects/iphone-launch-sprint
-.venv/bin/python assist.py --setup-login
+source .venv/bin/activate
+python3 assist.py --setup-login
 ```
 
 A **new** Chrome window opens. Sign in + 2FA **in that window**. Leave it open. **Never quit Chrome** (no ⌘Q) after this.
@@ -166,7 +174,8 @@ If Chrome is already open from everyday use and the script says it cannot start:
 ### I. Warm checkout (same open Chrome)
 
 ```bash
-.venv/bin/python assist.py --warm-only
+source .venv/bin/activate
+python3 assist.py --warm-only
 ```
 
 Finish checkout 2FA if asked. It adds a practice phone, reaches checkout, **empties the bag**. Chrome stays open.
@@ -174,7 +183,8 @@ Finish checkout 2FA if asked. It adds a practice phone, reaches checkout, **empt
 ### J. Practice until it is boring
 
 ```bash
-.venv/bin/python assist.py --now
+source .venv/bin/activate
+python3 assist.py --now
 ```
 
 It must stop at **Đặt hàng**. You do **not** click Đặt hàng. Do this 2–3 times until it is boring. The second run should click the **saved** shipping radio.
@@ -188,13 +198,13 @@ cd ~/Projects/iphone-launch-sprint
 git pull
 ```
 
-Then run with `.venv/bin/python` again. Do not type `python`.
+Then `source .venv/bin/activate` and `python3` again.
 
 ### L. Launch night (same Mac, same open Chrome)
 
 1. In `config.yaml`: `mode: launch` and confirm `launch_at`.
-2. **T−10:** `.venv/bin/python assist.py --warm-only` if Chrome is not already warm. Phone in hand. Bag must end empty.
-3. **T−0:** `.venv/bin/python assist.py --at-launch`
+2. **T−10:** `source .venv/bin/activate` then `python3 assist.py --warm-only` if Chrome is not already warm. Phone in hand. Bag must end empty.
+3. **T−0:** `python3 assist.py --at-launch`
 4. **You** click Đặt hàng.
 
 ---
@@ -203,9 +213,10 @@ Then run with `.venv/bin/python` again. Do not type `python`.
 
 | What you see | What you do |
 |---|---|
-| `command not found: python` | You typed `python`. On a Mac that does not exist. Use `.venv/bin/python` after step E. |
+| `command not found: python` | You typed `python`. Type `python3` after `source .venv/bin/activate`. |
+| `no such file or directory: .venv/bin/python` | You skipped step E, or you are in the wrong folder. Run step E in this folder. |
+| `No module named 'yaml'` or `Playwright not installed` | You used `python3` without `(.venv)` in the prompt. Run `source .venv/bin/activate` first. |
 | `git: command not found` or `xcode-select` | Step B. Do not continue until `git --version` works. |
-| `Playwright not installed` | Redo step E. You are not using `.venv/bin/python`. |
 | Clone 404 | Wrong GitHub account. Step C. |
 | Apple ID every run | You quit Chrome. Sign in again (H). Leave it open. |
 | Script sits on sign-in | Finish 2FA in **that** Chrome. It is waiting. |
@@ -228,11 +239,11 @@ Do this on **the computer you will use at T-0**. Practice on another machine doe
 
 1. Clone + `config.yaml` as above.
 2. In a normal browser: Apple ID → Payment → card **billing** already correct (Vietnam quận/phường, no junk postal). Not at T-0 (popup ~40s).
-3. `.venv/bin/python assist.py --setup-login`  
+3. `source .venv/bin/activate` then `python3 assist.py --setup-login`  
    Sign in + 2FA in the **script’s Chrome** (not everyday Chrome). Leave that window open. Never ⌘Q / quit Chrome after this.
-4. `.venv/bin/python assist.py --warm-only`  
+4. `python3 assist.py --warm-only`  
    Second login: **checkout** SSO. 2FA again if asked. Adds a practice iPhone, reaches checkout, **empties the bag**. Leave Chrome open.
-5. `.venv/bin/python assist.py --now`  
+5. `python3 assist.py --now`  
    Full dry-run → stop at Đặt hàng (not clicked). Repeat until it is boring (2–3 clean runs). Second run should select the saved shipping radio, not type a new address.
 
 The script always applies `shipping_address` from config:
@@ -246,8 +257,8 @@ Same Apple ID on a new computer: after login, the saved address usually appears 
 
 ## Launch day (same computer, same open Chrome)
 
-- **T−10:** `.venv/bin/python assist.py --warm-only` if Chrome isn’t already warm. 2FA phone in hand. Bag must end empty.
-- **T−0:** `.venv/bin/python assist.py --at-launch` (sleeps until `launch_at`). Do not add extra seconds after 19:00.
+- **T−10:** `source .venv/bin/activate` then `python3 assist.py --warm-only` if Chrome isn’t already warm. 2FA phone in hand. Bag must end empty.
+- **T−0:** `python3 assist.py --at-launch` (sleeps until `launch_at`). Do not add extra seconds after 19:00.
 - **You** click Đặt hàng.
 
 `--now` = same product path as launch, no clock. `--at-launch` = waits until `launch_at`. Don’t quit Chrome between warm and sprint.

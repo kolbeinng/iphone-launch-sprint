@@ -17,16 +17,18 @@ The long text on this GitHub page is this file (`README.md`). The Mac A–Z step
 
 Follow **[checklist.md](checklist.md)** from A to L. That is the only path.
 
-Do not type `python`. A Mac does not have that command.  
-Do not run `launch.py`. The only script is `assist.py`.
+Do not type `python`. Type **`python3`**.  
+Do not run `launch.py`. The only script is `assist.py`.  
+Do not run `python3 assist.py` until Terminal shows `(.venv)`.
 
 After step E in the checklist, every command is:
 
 ```bash
 cd ~/Projects/iphone-launch-sprint
-.venv/bin/python assist.py --setup-login
-.venv/bin/python assist.py --warm-only
-.venv/bin/python assist.py --now
+source .venv/bin/activate
+python3 assist.py --setup-login
+python3 assist.py --warm-only
+python3 assist.py --now
 ```
 
 Leave Chrome open. Never ⌘Q.
@@ -34,8 +36,8 @@ Leave Chrome open. Never ⌘Q.
 ## Launch night
 
 1. In `config.yaml`: `mode: launch` and confirm `launch_at`
-2. **T−10:** `.venv/bin/python assist.py --warm-only` if Chrome is not already warm
-3. **T−0:** `.venv/bin/python assist.py --at-launch`
+2. **T−10:** `source .venv/bin/activate` then `python3 assist.py --warm-only` if Chrome is not already warm
+3. **T−0:** `python3 assist.py --at-launch`
 4. **You** click Đặt hàng
 
 ## Config
