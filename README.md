@@ -60,7 +60,6 @@ python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install --upgrade pip
 python3 -m pip install -r requirements.txt
-python3 -m playwright install chrome
 python3 -c "from playwright.sync_api import sync_playwright; print('playwright ok')"
 cp config.example.yaml config.yaml
 open -e config.yaml
@@ -148,7 +147,6 @@ py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-python -m playwright install chrome
 python -c "from playwright.sync_api import sync_playwright; print('playwright ok')"
 copy config.example.yaml config.yaml
 notepad config.yaml
