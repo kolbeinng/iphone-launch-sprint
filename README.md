@@ -87,7 +87,7 @@ git --version
 python3 --version
 mkdir -p ~/Projects
 cd ~/Projects
-git clone -b cursor/dynamic-sku-select https://github.com/kolbeinng/iphone-launch-sprint.git
+git clone https://github.com/kolbeinng/iphone-launch-sprint.git
 cd iphone-launch-sprint
 ```
 
@@ -95,7 +95,7 @@ Both `git` and `python3` must print a version number. If either says "command no
 
 A browser window will open asking you to sign in to GitHub. Sign in as yourself. If you get **404**, you do not have access to the repo yet — ask the owner to add you.
 
-**Use the `git clone` above, not the green Code → Download ZIP button.** The ZIP unpacks to a folder called `iphone-launch-sprint-cursor-dynamic-sku-select`, because GitHub adds the branch name to it, so every `cd iphone-launch-sprint` in this guide would fail. It also is not a git checkout, so you cannot pull fixes later. If you already took the ZIP, rename the folder to `iphone-launch-sprint` and the rest of the guide works.
+**Use the `git clone` above, not the green Code → Download ZIP button.** The ZIP unpacks to a folder called `iphone-launch-sprint-main`, because GitHub adds the branch name to it, so every `cd iphone-launch-sprint` in this guide would fail. It also is not a git checkout, so you cannot pull fixes later. If you already took the ZIP, rename the folder to `iphone-launch-sprint` and the rest of the guide works.
 
 ### Step 3 — Install the Python packages
 
@@ -203,7 +203,7 @@ py -3 --version
 cd $env:USERPROFILE
 mkdir Projects -ErrorAction SilentlyContinue
 cd Projects
-git clone -b cursor/dynamic-sku-select https://github.com/kolbeinng/iphone-launch-sprint.git
+git clone https://github.com/kolbeinng/iphone-launch-sprint.git
 cd iphone-launch-sprint
 ```
 
@@ -211,7 +211,7 @@ Both must print a version number. If not, you are still in the old PowerShell wi
 
 A browser window will open asking you to sign in to GitHub. Sign in as yourself. If you get **404**, you do not have access to the repo yet — ask the owner to add you.
 
-**Use the `git clone` above, not the green Code → Download ZIP button.** The ZIP unpacks to a folder called `iphone-launch-sprint-cursor-dynamic-sku-select`, because GitHub adds the branch name to it, so every `cd iphone-launch-sprint` in this guide would fail. It also is not a git checkout, so you cannot pull fixes later. If you already took the ZIP, rename the folder to `iphone-launch-sprint` and the rest of the guide works.
+**Use the `git clone` above, not the green Code → Download ZIP button.** The ZIP unpacks to a folder called `iphone-launch-sprint-main`, because GitHub adds the branch name to it, so every `cd iphone-launch-sprint` in this guide would fail. It also is not a git checkout, so you cannot pull fixes later. If you already took the ZIP, rename the folder to `iphone-launch-sprint` and the rest of the guide works.
 
 ### Step 3 — Install the Python packages
 
@@ -295,6 +295,14 @@ python3 -m pip install -r requirements.txt
 On Windows the second line is `py -3 -m pip install -r requirements.txt`.
 
 `git pull` never touches `config.yaml` — it is ignored by git, so your CVV and address stay as you left them. If `git pull` complains that you have local changes, you edited a tracked file by mistake; `git stash` puts it aside and lets the pull through.
+
+**If `git pull` says it cannot find the remote ref `cursor/dynamic-sku-select`,** that computer was set up before the branch was renamed to `main`. Run these once and it is fixed for good:
+
+```bash
+git fetch origin
+git checkout -B main origin/main
+git branch -u origin/main
+```
 
 ---
 
