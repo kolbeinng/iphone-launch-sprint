@@ -3026,8 +3026,11 @@ def _click_review_and_stop_at_place_order(
                     return t === 'đặt hàng' || t === 'place order' || t.startsWith('đặt hàng');
                   });
                 }""",
+                # Apple's graviton hops in this checkout all land ~10s (Shipping→Billing,
+                # CVV panel mount, this one). A 5s first budget guaranteed a timeout and
+                # made us re-submit the review form while Apple was still working.
                 label=f"Apple hop Review→Đặt hàng (attempt {attempt + 1})",
-                timeout_ms=5_000 if attempt == 0 else 15_000,
+                timeout_ms=25_000 if attempt == 0 else 15_000,
                 snapshot_js=_SNAP_CHECKOUT,
             )
             review_ok = True
