@@ -27,6 +27,7 @@ from assist import (
     _is_apple_404,
     _list_dimension_options,
     _pref_matches,
+    _size_prefs_for_model,
     goto_resilient,
 )
 from sprint_common import (
@@ -40,11 +41,13 @@ from sprint_common import (
     validate_store_url,
 )
 
-# (dimension radio name, config key, alternate config key, fallback prefs)
+# (dimension radio name, config key, alternate config key)
+# No hardcoded fallbacks: the point of this tool is to report what the real run
+# would do, and the run derives the size from target.model.
 DIMENSIONS = (
-    ("dimensionScreensize", "screensizes", "sizes", ["Pro Max", "6,9", "6.9", "6_9inch", "6_9"]),
-    ("dimensionColor", "colors", None, []),
-    ("dimensionCapacity", "storages", "capacities", []),
+    ("dimensionScreensize", "screensizes", "sizes"),
+    ("dimensionColor", "colors", None),
+    ("dimensionCapacity", "storages", "capacities"),
 )
 
 
@@ -98,7 +101,7 @@ def report_prefs(opts: list[dict], prefs: list[str], pretty: str) -> bool:
     return False
 
 
-def probe(page, url: str, prefs_cfg: dict) -> bool:
+def probe(page, url: str, prefs_cfg: dict, target: dict | None = None) -> bool:
     log("=" * 72)
     log(f"PROBE {url}")
     try:
@@ -122,15 +125,29 @@ def probe(page, url: str, prefs_cfg: dict) -> bool:
         log("  VERDICT: not a live configure page. The sprint would skip this URL.")
         return False
 
+    model = (
+        str((target or {}).get("model") or "pro-max")
+        .strip()
+        .lower()
+        .replace(" ", "-")
+    )
     all_ok = True
-    for dim, key, alt, fallback in DIMENSIONS:
+    for dim, key, alt in DIMENSIONS:
         opts = _list_dimension_options(page, dim)
         pretty = _dimension_pretty(dim)
         if not opts:
             log(f"  {pretty}: (no radios on this page)")
             continue
         log(f"  {pretty}: [{_format_dimension_options(opts)}]")
-        prefs = [str(x) for x in (prefs_cfg.get(key) or (prefs_cfg.get(alt) if alt else None) or fallback)]
+        prefs = [
+            str(x)
+            for x in (
+                prefs_cfg.get(key) or (prefs_cfg.get(alt) if alt else None) or []
+            )
+        ]
+        if not prefs and dim == "dimensionScreensize":
+            prefs = _size_prefs_for_model(model, opts)
+            log(f"    (screensizes not set — model {model!r} picks this)")
         if not report_prefs(opts, prefs, pretty):
             all_ok = False
 
@@ -145,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         die(str(exc))
     prefs_cfg = cfg.get("product_prefs") if isinstance(cfg.get("product_prefs"), dict) else {}
+    target = cfg.get("target") if isinstance(cfg.get("target"), dict) else {}
 
     urls = args.urls or config_urls(cfg)
     if not urls:
@@ -162,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
                 p, profile_dir=ASSIST_PROFILE_DIR
             )
             for url in urls:
-                if not probe(page, url, prefs_cfg):
+                if not probe(page, url, prefs_cfg, target):
                     clean = False
         finally:
             disconnect_assist_browser(browser, meta)
