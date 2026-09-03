@@ -888,6 +888,31 @@ def _norm_match_hay(value: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+def _normalize_match_sets(family_match: list | None) -> list[list[str]]:
+    """
+    Accept either a flat token list or a list of token lists.
+
+      ["18", "Pro Max"]                  -> [["18", "Pro Max"]]
+      [["18", "Pro Max"], ["18", "Pro"]] -> tried strictest-first
+
+    Apple has always spelled out both variants on the hub card
+    ("iPhone 17 Pro & iPhone 17 Pro Max"), but if the launch card is shortened
+    to just "iPhone 18 Pro" the "Pro Max" token finds nothing. A looser second
+    set lets Phase B still auto-open instead of dropping to a manual click.
+    """
+    raw = family_match or []
+    if raw and all(isinstance(x, (list, tuple)) for x in raw):
+        groups = [list(x) for x in raw]
+    else:
+        groups = [list(raw)]
+    out: list[list[str]] = []
+    for group in groups:
+        tokens = [str(t) for t in group if str(t).strip()]
+        if tokens and tokens not in out:
+            out.append(tokens)
+    return out
+
+
 def _hub_link_matches(link: dict, family_match: list[str]) -> bool:
     """All match tokens must appear in href or text (case-insensitive)."""
     tokens = [str(t).strip().lower() for t in family_match if str(t).strip()]
@@ -1074,7 +1099,7 @@ def wait_family_configure_ready(
         raise RuntimeError("No family_url / hub_url candidates")
 
     t_all = time.perf_counter()
-    match_tokens = [str(x) for x in (family_match or []) if str(x).strip()]
+    match_sets = _normalize_match_sets(family_match)
 
     # ----- Phase A: guessed URLs -----
     if urls:
@@ -1148,28 +1173,34 @@ def wait_family_configure_ready(
             )
         )
         year = str((target or {}).get("year") or "")
-        matched = [x for x in links if _hub_link_matches(x, match_tokens)]
-        dropped = []
-        kept = []
-        for x in matched:
-            why = _hub_link_forbidden_reason(x, year=year)
-            if why:
-                dropped.append(f"{x.get('text')!r} ({why})")
-            else:
-                kept.append(x)
-        if dropped:
-            log("FAMILY B  dropped forbidden cards: " + ", ".join(dropped[:8]))
-        matched = kept
-        if match_tokens:
+        # Strictest token set first; only widen when a set finds nothing at all.
+        for attempt, match_tokens in enumerate(match_sets):
+            matched = [x for x in links if _hub_link_matches(x, match_tokens)]
+            dropped = []
+            kept = []
+            for x in matched:
+                why = _hub_link_forbidden_reason(x, year=year)
+                if why:
+                    dropped.append(f"{x.get('text')!r} ({why})")
+                else:
+                    kept.append(x)
+            if dropped:
+                log("FAMILY B  dropped forbidden cards: " + ", ".join(dropped[:8]))
+            matched = kept
+            looser = " (looser fallback)" if attempt else ""
             log(
-                f"FAMILY B  match tokens={match_tokens!r} → "
+                f"FAMILY B  match tokens={match_tokens!r}{looser} → "
                 f"{len(matched)} hit(s): "
                 + ", ".join(f"{x.get('text')!r}" for x in matched[:6])
             )
-        if len(matched) == 1:
-            target = matched[0]["href"]
-            log(f"FAMILY B  unique match — opening {target}")
-            goto_resilient(page, target)
+            if len(matched) > 1:
+                log("FAMILY B  multiple matches — USER PICK (won't guess)")
+                break
+            if not matched:
+                continue
+            hub_target = matched[0]["href"]
+            log(f"FAMILY B  unique match — opening {hub_target}")
+            goto_resilient(page, hub_target)
             # Brief wait for configure (page may need a beat)
             t_b = time.perf_counter()
             while time.perf_counter() - t_b < 8.0:
@@ -1182,10 +1213,9 @@ def wait_family_configure_ready(
                     return page.url
                 page.wait_for_timeout(150)
             log("FAMILY B  opened match but configure not ready — USER PICK")
-        elif len(matched) > 1:
-            log("FAMILY B  multiple matches — USER PICK (won't guess)")
+            break
         else:
-            log("FAMILY B  no match — USER PICK on hub")
+            log("FAMILY B  no match on any token set — USER PICK on hub")
 
         # Scroll hub into a useful spot
         try:
@@ -3172,6 +3202,32 @@ def _bag_is_empty(page) -> bool:
         return False
 
 
+def _wait_bag_empty(page, *, timeout_ms: int = 4_000, reload_after_ms: int = 1_500) -> bool:
+    """
+    Poll for the empty-bag marker instead of trusting one instant read.
+
+    Apple re-renders the bag a beat after the last removal. In that window the
+    DOM has no remove control yet still shows the checkout button and no
+    "giỏ hàng của bạn đang trống" text, so a single immediate check reads as
+    "still full" and aborted the run at step zero. Reload once mid-wait because
+    the bag occasionally needs a fresh fetch to drop a stale checkout button.
+    """
+    t0 = time.perf_counter()
+    reloaded = False
+    while (time.perf_counter() - t0) * 1000 < timeout_ms:
+        if _bag_is_empty(page):
+            return True
+        if not reloaded and (time.perf_counter() - t0) * 1000 >= reload_after_ms:
+            reloaded = True
+            log("Bag not settled — reloading bag page once")
+            try:
+                goto_resilient(page, "https://www.apple.com/vn/shop/bag")
+            except Exception:  # noqa: BLE001
+                pass
+        page.wait_for_timeout(150)
+    return _bag_is_empty(page)
+
+
 def empty_bag(page, *, max_rounds: int = 12, reason: str = "start clean") -> None:
     """Remove every line item from /vn/shop/bag so the timed run starts clean."""
     goto_resilient(page, "https://www.apple.com/vn/shop/bag")
@@ -3230,7 +3286,7 @@ def empty_bag(page, *, max_rounds: int = 12, reason: str = "start clean") -> Non
             goto_resilient(page, "https://www.apple.com/vn/shop/bag")
             page.wait_for_timeout(400)
 
-    if _bag_is_empty(page):
+    if _wait_bag_empty(page):
         log("Bag emptied — ready for timed run")
     else:
         # Last resort: still no empty marker but checkout gone
@@ -4559,11 +4615,18 @@ def main(argv: list[str] | None = None) -> int:
         family_match_cfg = cfg.get("family_match") or []
         if not isinstance(family_match_cfg, list):
             family_match_cfg = []
-        family_match = [str(x) for x in family_match_cfg if str(x).strip()]
+        # Keep nesting intact: a list of token lists means "try strictest first".
+        family_match = _normalize_match_sets(family_match_cfg)
         target = load_order_target(cfg)
-        if not family_match and str(target.get("year")) == "18":
-            family_match = ["18", "Pro Max"]
-            log("family_match empty — defaulting to ['18', 'Pro Max']")
+        if str(target.get("year")) == "18":
+            fallback = ["18", "Pro"]
+            if not family_match:
+                family_match = [["18", "Pro Max"], fallback]
+                log(f"family_match empty — defaulting to {family_match!r}")
+            elif fallback not in family_match:
+                # Apple may shorten the hub card to just "iPhone 18 Pro".
+                family_match.append(fallback)
+                log(f"family_match — added looser fallback {fallback!r}")
         product_prefs = cfg.get("product_prefs") if isinstance(cfg.get("product_prefs"), dict) else {}
         use_dynamic = bool(product_prefs) or bool(family_candidates)
         if str(target.get("year")) == "18":
