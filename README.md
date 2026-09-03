@@ -321,6 +321,59 @@ On a Mac put `python3` in front. On Windows put `python` in front. So the full r
 
 Launch-night steps and what each checkout screen means: **[checklist.md](checklist.md)**.
 
+### Using `--at-launch` on the night
+
+The point of `--at-launch` is that you never race a clock by hand. You start it early, walk away, and it sprints at the exact `launch_at` time from your config. This is the flag you use on launch night.
+
+**About ten minutes before the launch time**, open a Terminal or PowerShell window, get into the project folder with the venv on, and run:
+
+Mac:
+
+```bash
+cd ~/Projects/iphone-launch-sprint
+source .venv/bin/activate
+python3 assist.py --warm-only
+```
+
+Windows:
+
+```powershell
+cd $env:USERPROFILE\Projects\iphone-launch-sprint
+.\.venv\Scripts\Activate.ps1
+python assist.py --warm-only
+```
+
+Sign in to Apple in the Chrome window it opens, do the 2FA from your phone. It will add a practice iPhone, go to checkout, then empty the bag. That is normal — it exists to prove your session is warm and to skip the 2FA later. When it says `browser LEFT OPEN (session warm)`, **leave that Chrome window alone**. Do not close it. Do not press ⌘Q. Do not restart Chrome.
+
+**Then, still comfortably before launch time**, in the same window run:
+
+```bash
+python3 assist.py --at-launch      # Mac
+python  assist.py --at-launch      # Windows
+```
+
+It will print a line like `Waiting until 2026-09-12 19:00:00 (T-0)…` and then a countdown that gets more frequent as the time approaches:
+
+```
+T-0: 8.4 min left
+T-0: 8.2 min left
+...
+T-0: 25.0s left
+T-0: 24.0s left
+...
+T-0 — GO
+```
+
+Once it prints `GO`, you do not touch anything. The script drives Chrome. About a minute later it reaches the Đặt hàng button, stops, and beeps. That is the moment you click Đặt hàng yourself. The script never clicks it.
+
+The whole point is that you can start `--at-launch` **five, ten, thirty minutes** before Apple opens. It just waits. Do not try to time it. If you are not sure of the exact minute, start it earlier — waiting is free, missing it is not.
+
+If the launch time has already passed when you start it, it does not sulk — it prints `launch_at already past — sprinting NOW` and goes immediately.
+
+If Apple has not published the new iPhone page yet when the clock hits `launch_at`, the script polls the guessed URL and the hub until the page appears, then continues. You do not need to do anything.
+
+**One rule about the Chrome window:** the same Chrome that `--warm-only` opened must still be open when `--at-launch` fires. That window is your logged-in Apple session. Close it and you have to sign in and 2FA again, and you have lost the sprint.
+
 ### What `probe_family.py` is for
 
 The script has to click the colour, size and storage you asked for in `config.yaml`. It finds them by matching the words you wrote against the words Apple shows on the page. If Apple uses a different word, the script cannot find your choice, so it stops and waits for you to click it by hand.
