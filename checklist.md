@@ -1,87 +1,105 @@
-# Don't forget
+# Launch night checklist
 
-Scripts never enter your Apple password and never click **Đặt hàng**.
+Setting up a new computer? Start with **[README.md](README.md)** instead. This page is for when the script already works.
 
-**Install** (paste blocks): **[README.md](README.md)** — macOS or Windows 11.
-
-## What this orders
-
-**TEST (`mode: test`):** iPhone 17 Pro Max · 256GB · Cam Vũ Trụ  
-**LAUNCH (`mode: launch`):** iPhone 18 Pro Max. Fold is not listed.
-
-In `config.yaml` change only:
-
-1. `mode: launch`
-2. Confirm `launch_at`
-
-`--warm-only` uses a live iPhone 17 link, then **empties the bag**. That is not the order.  
-On launch, the script **refuses** to bag 17 / Fold / Air.
-
-`config.yaml` is never on GitHub. Repo: https://github.com/kolbeinng/iphone-launch-sprint — branch `cursor/dynamic-sku-select`.
+The script never types your Apple password and never clicks **Đặt hàng**. You click it.
 
 ---
 
-## After setup
+## Which phone it buys
 
-On the computer you will use at T-0:
+| Mode | Phone |
+|---|---|
+| `mode: test` | iPhone 17 Pro Max · 256GB · Cam Vũ Trụ — practice, on sale now |
+| `mode: launch` | iPhone 18 Pro Max |
 
-1. `config.yaml` exists. CVV filled. `mode: test` for practice.
-2. Apple ID → Payment → card billing already Vietnam (HCM, quận/phường).
-3. `--warm-only` — 2FA in **that** Chrome if asked. Bag empty. Leave Chrome open.
-4. `--now` — stop at Đặt hàng. Do not click it. Repeat until boring. Second run should click the saved shipping radio.
+On launch night you change **one line** in `config.yaml`: `mode: test` → `mode: launch`. Then check that `launch_at` matches Apple's announced Vietnam time.
 
-Saved shipping: if Apple shows a radio whose visible name + street match config → click it. Else fill **Sử dụng địa chỉ mới**.
+With `mode: launch` on, the script **refuses** to put an iPhone 17, Fold or Air in the bag. If Apple's page is not up yet, it keeps looking rather than buying the wrong phone.
 
----
-
-## Launch day
-
-Same computer. Same open Chrome.
-
-- **T−10:** `--warm-only` if Chrome is not already warm. Bag empty.
-- **T−0:** `--at-launch` (sleeps until `launch_at`).
-- **You** click Đặt hàng.
-
-Do not quit Chrome between warm and sprint. Keep `warm_product_url` on a live iPhone 17 link. Keep `dry_run: true`.
+`--warm-only` always uses an iPhone 17 link, even on launch night. That is only to keep you signed in, and it empties the bag afterwards. It is not your order.
 
 ---
 
-## Two delivery screens
+## Days before
 
-| Page | What it is | What we do |
-|------|------------|------------|
-| **Fulfillment** (“Giao hàng đến”) | City so slots exist | If it already says HCM, skip the editor, click continue. |
-| **Shipping** | Street | Click the matching saved radio, or fill new from config. |
-
----
-
-## Night before
-
-- [ ] `mode: launch` in `config.yaml`
-- [ ] `checkout.cvv` is this machine’s card
-- [ ] `dry_run: true`
-- [ ] Alarm `Asia/Ho_Chi_Minh`
+- [ ] Apple ID → Payment → the card's **billing address** is already Vietnam (city, quận, phường, no leftover postal code). Fixing this during checkout costs about 40 seconds.
+- [ ] Your shipping address is **saved** in your Apple account. The script clicks a saved address in about 20ms; typing a new one is much slower.
+- [ ] `config.yaml` on this computer has your CVV, your address, your contact details.
+- [ ] You have done `--now` a few times and it reached Đặt hàng every time.
 
 ---
 
-## Timer
+## The night itself
 
-- **US (CLICK/FILL)** — our clicks. Should stay under ~1s.
-- **APPLE (WAIT/NAV/POLL)** — page load. Do not “fix” this by clicking more.
+Use the **same computer** you practised on, and keep **the same Chrome window** open the whole time.
+
+**T−10 minutes**
+
+```
+--warm-only
+```
+
+Phone in your hand for 2FA. It must finish with the bag empty. If Chrome is already open and warm from earlier today, you can skip this.
+
+**T−0**
+
+```
+--at-launch
+```
+
+This sleeps until `launch_at`, then goes. Do not add a safety margin after the launch time — start it early and let it wait.
+
+**Then you click Đặt hàng.**
+
+Put `python3 assist.py` (Mac) or `python assist.py` (Windows) in front of those commands.
+
+Do not quit Chrome between the warm and the run. If you do, you lose the Apple checkout session and have to do 2FA again.
 
 ---
 
-## If a command fails
+## Also check
 
-**Mac:** the command is `python3` after `source .venv/bin/activate` (line starts with `(.venv)`).  
-`git` / `python3` missing → README macOS block 1 is not done.  
-`No module named 'yaml'` → you skipped `source .venv/bin/activate`.  
-`command not found: python` → you typed the Windows command.
+- [ ] `dry_run: true` is still set
+- [ ] Alarm set in `Asia/Ho_Chi_Minh`
+- [ ] Do Not Disturb / Focus is **off**, so you see the 2FA code
+- [ ] Laptop plugged in, wifi solid
 
-**Windows:** the command is `python` after `.\.venv\Scripts\Activate.ps1` (line starts with `(.venv)`).  
-`git` / `python` missing → new PowerShell after README Windows block 1.  
-`python3` is not recognized → you typed the Mac command.  
-`winget` missing → Microsoft Store → App Installer.  
-Clone **404** → GitHub as **kolbeinng**.  
-Apple login every run → Chrome was closed. `--warm-only` again. Leave it open.  
-Script sits on sign-in → finish 2FA in **that** Chrome.
+If you are not signed in when the sale opens, speed does not matter. You have already lost.
+
+---
+
+## The two delivery screens
+
+Apple asks about delivery twice. They are not the same question, and neither can be skipped.
+
+| Screen | What it is asking | What the script does |
+|---|---|---|
+| **Giao hàng đến** | Which city, so it can show delivery slots | If it already says Hồ Chí Minh, it leaves it alone and clicks continue |
+| **Chúng tôi giao hàng cho bạn đến địa chỉ nào?** | Which street address | Clicks your saved address if the name and street match your config, otherwise types a new one |
+
+---
+
+## Reading the timer
+
+Every `--now` run prints a summary at the end, split in two.
+
+- **US (CLICK/FILL)** — our own clicking. This should stay around one second. If it grows, something is wrong on our side.
+- **APPLE (WAIT/NAV/POLL)** — waiting for Apple's pages. This is normally 50+ seconds and there is nothing to fix.
+
+A long pause with a `WAIT … heartbeat` line means the script is idle and the page is loading. That is Apple, not a freeze.
+
+---
+
+## If a run fails
+
+| What you see | What to do |
+|---|---|
+| `Invalid timezone: Asia/Ho_Chi_Minh` | Old clone. Re-run `pip install -r requirements.txt`. |
+| `No module named 'yaml'` | Your line is missing `(.venv)`. Activate first. |
+| Apple asks for a password every run | Chrome was closed. Run `--warm-only` again and leave it open. |
+| Stuck on a sign-in page | It is waiting for you. Finish 2FA in that Chrome window. |
+| `Could not empty bag` | Chrome is parked on an old checkout page. Go back to the bag tab and re-run. |
+| Trade-in options stay greyed out | Apple has not committed the storage choice. Do not click the page yourself and do not reload — just run again. |
+
+Full setup and install problems: **[README.md](README.md)**.

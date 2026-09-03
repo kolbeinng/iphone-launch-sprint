@@ -1,58 +1,75 @@
 # iPhone Launch Sprint
 
-Dry-run for apple.com/vn. Never clicks **Đặt hàng**. `dry_run: true` is required.
+A practice script for buying an iPhone on **apple.com/vn**.
 
-**TEST:** iPhone 17 Pro Max · 256GB · Cam Vũ Trụ  
-**LAUNCH:** iPhone 18 Pro Max — `mode: launch` in `config.yaml`
+It fills the whole checkout for you and then **stops at the Đặt hàng button**. It never clicks it. You do. `dry_run: true` is required and the script refuses to start without it.
 
-Branch: **`cursor/dynamic-sku-select`**. Do not open a pull request.
+- **Practice now:** iPhone 17 Pro Max · 256GB · Cam Vũ Trụ
+- **Launch night:** iPhone 18 Pro Max — one line in `config.yaml`
 
-`config.yaml` stays on the computer (CVV). Copy it from `config.example.yaml`.
-
-The only script is **`assist.py`**. After setup: `--warm-only`, then `--now`.
-
-Launch-night notes: **[checklist.md](checklist.md)**.
+A full run takes about a minute. Roughly one second of that is our clicking; the rest is Apple's pages loading.
 
 ---
 
-## macOS
+## Before you start
 
-Open **Terminal**. Paste block 1. When the Mac window appears, click **Install** and wait until it finishes. Then a **new** Terminal, block 2, 3, 4.
+You need these four things. Get them now, not on launch night.
 
-On a Mac the command is `python3`.
+1. **An Apple ID** with your card and shipping address already saved, and the card's **billing address set to Vietnam**.
+2. **Your phone**, for the Apple 2FA code.
+3. **A GitHub account.** This repo is private, so the owner (**kolbeinng**) must add you under Settings → Collaborators.
+4. **Your card's CVV** (the 3 digits). You type it on your own computer. It never goes to GitHub.
 
-### Block 1 — Chrome, Git, Python
+Then pick your computer:
+
+- **[Mac](#mac-setup)** — commands start with `python3`
+- **[Windows 11](#windows-11-setup)** — commands start with `python`
+
+Do not mix them. A Mac has no `python` command; Windows has no `python3`.
+
+---
+
+# Mac setup
+
+Open **Terminal** (press ⌘ Space, type `Terminal`, press Return).
+
+Copy each step, paste it into Terminal, press Return. Do them in order.
+
+### Step 1 — Install Chrome and Apple's developer tools
 
 ```bash
-curl -fsSL -o /tmp/googlechrome.dmg "https://dl.google.com/chrome/mac/universal/stable/GGRO/googlechrome.dmg"
-hdiutil attach /tmp/googlechrome.dmg -nobrowse
-test -d "/Applications/Google Chrome.app" || cp -R "/Volumes/Google Chrome/Google Chrome.app" /Applications/
-hdiutil detach "/Volumes/Google Chrome"
-rm -f /tmp/googlechrome.dmg
-xcode-select --install
+if [ ! -d "/Applications/Google Chrome.app" ]; then
+  curl -fsSL -o /tmp/chrome.dmg "https://dl.google.com/chrome/mac/universal/stable/GGRO/googlechrome.dmg"
+  yes | hdiutil attach -nobrowse -noverify /tmp/chrome.dmg
+  cp -R "/Volumes/Google Chrome/Google Chrome.app" /Applications/
+  hdiutil detach "/Volumes/Google Chrome"
+  rm -f /tmp/chrome.dmg
+fi
+xcode-select -p >/dev/null 2>&1 || xcode-select --install
 ```
 
-`xcode-select` opens a Mac dialog. Click **Install**. Wait until it is done (often 5–15 minutes). If it says already installed, continue.
+This downloads Google Chrome and installs it, then asks macOS for the developer tools (that is where `git` comes from).
 
-Close Terminal. Open a **new** Terminal.
+**If a window pops up saying "Install the command line developer tools?"** — click **Install**, agree, and wait until it finishes. This can take 5 to 15 minutes. If no window appears, you already have them.
 
-### Block 2 — check + download
+When it is done, **close Terminal and open a new one.**
+
+### Step 2 — Check the tools, then download the project
 
 ```bash
 git --version
 python3 --version
 mkdir -p ~/Projects
 cd ~/Projects
-git clone https://github.com/kolbeinng/iphone-launch-sprint.git
+git clone -b cursor/dynamic-sku-select https://github.com/kolbeinng/iphone-launch-sprint.git
 cd iphone-launch-sprint
-git checkout cursor/dynamic-sku-select
 ```
 
-The repo is **private**. Clone still works. Git will open a browser — sign in as **kolbeinng**.  
-`git` and `python3` must print a version. If they do not, block 1 is not finished.  
-If clone says **404**, you signed in as the wrong GitHub account. Sign in as **kolbeinng**, then run the `git clone` lines again.
+Both `git` and `python3` must print a version number. If either says "command not found", step 1 has not finished — wait for it and try again.
 
-### Block 3 — packages + config
+A browser window will open asking you to sign in to GitHub. Sign in as yourself. If you get **404**, you do not have access to the repo yet — ask the owner to add you.
+
+### Step 3 — Install the Python packages
 
 ```bash
 cd ~/Projects/iphone-launch-sprint
@@ -60,58 +77,73 @@ python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install --upgrade pip
 python3 -m pip install -r requirements.txt
-python3 -c "from playwright.sync_api import sync_playwright; print('playwright ok')"
+python3 -c "from playwright.sync_api import sync_playwright; print('all good')"
+```
+
+Two things must be true before you continue:
+
+- The start of your Terminal line now shows **`(.venv)`**
+- The last command printed **`all good`**
+
+### Step 4 — Make your config file
+
+```bash
 cp config.example.yaml config.yaml
 open -e config.yaml
 ```
 
-The line must start with `(.venv)`. The check must print `playwright ok`.  
-In TextEdit: keep `mode: test`, keep `dry_run: true`, type `checkout.cvv`, Save, close.
+TextEdit opens. Change these to **your own** details, then press ⌘S to save and close the window:
 
-### Block 4 — warm, then practice
+| Setting | What to put |
+|---|---|
+| `cvv` | your card's 3 digits |
+| `shipping_address` | your name, street, city, district |
+| `contact` | your email and phone |
+
+Leave `mode: test` and `dry_run: true` alone.
+
+### Step 5 — Sign in to Apple
 
 ```bash
 python3 assist.py --warm-only
 ```
 
-Sign in + 2FA in **that** Chrome if Apple asks. Leave Chrome open. Bag must end empty.
+A Chrome window opens. **Sign in to Apple in that window** and finish the 2FA code from your phone. The script waits for you — it is not frozen.
+
+It then adds a test iPhone, goes to checkout, and **empties the bag** again. That is normal; it is only warming up your login.
+
+**Leave that Chrome window open. Do not quit it.** Quitting it means signing in and doing 2FA all over again.
+
+### Step 6 — Do a practice run
 
 ```bash
 python3 assist.py --now
 ```
 
-Stops at **Đặt hàng**. Do not click it.
+Watch it pick the phone, decline trade-in and AppleCare, and go through checkout. It stops at **Đặt hàng** and does not click it.
 
-New Terminal later:
+Run it a few times until it feels boring. That is the whole point.
+
+### Opening Terminal again later
+
+Every new Terminal window needs these two lines first:
 
 ```bash
 cd ~/Projects/iphone-launch-sprint
 source .venv/bin/activate
 ```
 
-Then `python3 assist.py …` again.
-
-### Launch night
-
-`mode: launch` and check `launch_at`. Same open Chrome:
-
-```bash
-python3 assist.py --warm-only
-python3 assist.py --at-launch
-```
-
-**You** click Đặt hàng.
+Wait for `(.venv)`, then run `python3 assist.py --now`.
 
 ---
 
-## Windows 11
+# Windows 11 setup
 
-Start → `PowerShell`. Paste block 1. Close PowerShell. New PowerShell. Blocks 2, 3, 4.
+Click **Start**, type `PowerShell`, open **Windows PowerShell**.
 
-On Windows the command is `python`.  
-If Windows asks **Yes**, click Yes. If Git opens a browser, sign in as **kolbeinng**.
+Copy each step, paste it, press Enter. Do them in order. If Windows asks for permission, click **Yes**.
 
-### Block 1 — Chrome, Git, Python
+### Step 1 — Install Chrome, Git and Python
 
 ```powershell
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force
@@ -120,9 +152,9 @@ winget install --id Git.Git -e --accept-package-agreements --accept-source-agree
 winget install --id Python.Python.3.12 -e --accept-package-agreements --accept-source-agreements
 ```
 
-Close this window. Open a **new** PowerShell.
+This takes a few minutes. When it finishes, **close PowerShell and open a new one.** The new programs only appear in a fresh window.
 
-### Block 2 — check + download
+### Step 2 — Check the tools, then download the project
 
 ```powershell
 git --version
@@ -130,16 +162,15 @@ py -3 --version
 cd $env:USERPROFILE
 mkdir Projects -ErrorAction SilentlyContinue
 cd Projects
-git clone https://github.com/kolbeinng/iphone-launch-sprint.git
+git clone -b cursor/dynamic-sku-select https://github.com/kolbeinng/iphone-launch-sprint.git
 cd iphone-launch-sprint
-git checkout cursor/dynamic-sku-select
 ```
 
-The repo is **private**. Clone still works. Git will open a browser — sign in as **kolbeinng**.  
-`git` and `py -3` must print a version.  
-If clone says **404**, you signed in as the wrong GitHub account. Sign in as **kolbeinng**, then run the `git clone` lines again.
+Both must print a version number. If not, you are still in the old PowerShell window — open a new one.
 
-### Block 3 — packages + config
+A browser window will open asking you to sign in to GitHub. Sign in as yourself. If you get **404**, you do not have access to the repo yet — ask the owner to add you.
+
+### Step 3 — Install the Python packages
 
 ```powershell
 cd $env:USERPROFILE\Projects\iphone-launch-sprint
@@ -147,44 +178,92 @@ py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-python -c "from playwright.sync_api import sync_playwright; print('playwright ok')"
+python -c "from playwright.sync_api import sync_playwright; print('all good')"
+```
+
+Two things must be true before you continue:
+
+- The start of your PowerShell line now shows **`(.venv)`**
+- The last command printed **`all good`**
+
+### Step 4 — Make your config file
+
+```powershell
 copy config.example.yaml config.yaml
 notepad config.yaml
 ```
 
-The line must start with `(.venv)`. The check must print `playwright ok`.  
-In Notepad: keep `mode: test`, keep `dry_run: true`, type `checkout.cvv`, Save, close.
+Notepad opens. Change these to **your own** details, then Save and close:
 
-### Block 4 — warm, then practice
+| Setting | What to put |
+|---|---|
+| `cvv` | your card's 3 digits |
+| `shipping_address` | your name, street, city, district |
+| `contact` | your email and phone |
+
+Leave `mode: test` and `dry_run: true` alone.
+
+### Step 5 — Sign in to Apple
 
 ```powershell
 python assist.py --warm-only
 ```
 
-Sign in + 2FA in **that** Chrome if Apple asks. Leave Chrome open. Bag must end empty.
+A Chrome window opens. **Sign in to Apple in that window** and finish the 2FA code from your phone. The script waits for you — it is not frozen.
+
+It then adds a test iPhone, goes to checkout, and **empties the bag** again. That is normal; it is only warming up your login.
+
+**Leave that Chrome window open. Do not close it.** Closing it means signing in and doing 2FA all over again.
+
+### Step 6 — Do a practice run
 
 ```powershell
 python assist.py --now
 ```
 
-Stops at **Đặt hàng**. Do not click it.
+Watch it pick the phone, decline trade-in and AppleCare, and go through checkout. It stops at **Đặt hàng** and does not click it.
 
-New PowerShell later:
+Run it a few times until it feels boring.
+
+### Opening PowerShell again later
+
+Every new PowerShell window needs these two lines first:
 
 ```powershell
 cd $env:USERPROFILE\Projects\iphone-launch-sprint
 .\.venv\Scripts\Activate.ps1
 ```
 
-Then `python assist.py …` again.
+Wait for `(.venv)`, then run `python assist.py --now`.
 
-### Launch night
+---
 
-`mode: launch` and check `launch_at`. Same open Chrome:
+## The two commands
 
-```powershell
-python assist.py --warm-only
-python assist.py --at-launch
-```
+That is the whole script. Everything else is setup.
 
-**You** click Đặt hàng.
+| Command | What it does |
+|---|---|
+| `--warm-only` | Signs in to Apple and checkout, then empties the bag. Run it before launch. |
+| `--now` | The full run. Stops at Đặt hàng. |
+| `--at-launch` | Same as `--now`, but waits until `launch_at` in your config first. |
+
+On a Mac put `python3 assist.py` in front. On Windows put `python assist.py` in front.
+
+Launch-night steps and what each checkout screen means: **[checklist.md](checklist.md)**.
+
+---
+
+## When something goes wrong
+
+| What you see | What it means |
+|---|---|
+| `command not found: python` | You are on a Mac. Use `python3`. |
+| `python3 is not recognized` | You are on Windows. Use `python`. |
+| `No module named 'yaml'` | Your line is missing `(.venv)`. Run the activate line first. |
+| `Invalid timezone: Asia/Ho_Chi_Minh` | Old clone. Run the install line again: `pip install -r requirements.txt`. |
+| `git: command not found` | Step 1 is not finished. Wait, then use a new Terminal or PowerShell. |
+| `404` when downloading the project | You do not have access to the private repo yet. |
+| Apple asks you to sign in on every run | Chrome got closed. Run `--warm-only` again and leave it open. |
+| It seems stuck on a sign-in page | It is waiting for you. Finish the 2FA code in that Chrome window. |
+| Nothing happens for 10–20 seconds | That is Apple's page loading. Do not click anything. |
