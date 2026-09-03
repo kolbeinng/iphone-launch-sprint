@@ -142,9 +142,8 @@ def _require_playwright():
         from playwright.sync_api import sync_playwright  # noqa: WPS433
     except ImportError:
         die(
-            "Playwright not installed. Run:\n"
-            "  pip install -r requirements.txt\n"
-            "  playwright install chromium"
+            "Playwright not installed. Activate the venv, then run:\n"
+            "  pip install -r requirements.txt"
         )
     return sync_playwright
 

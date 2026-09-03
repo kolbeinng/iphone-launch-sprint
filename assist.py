@@ -263,12 +263,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--keep-open-sec",
         type=int,
         default=30,
-        help="Seconds to leave the browser open after success/failure (default 30)",
-    )
-    p.add_argument(
-        "--stay-open",
-        action="store_true",
-        help="Do not auto-close Chrome; keep session warm until YOU close the window",
+        help="Seconds to pause on the final page before disconnecting (default 30; "
+        "Chrome always stays open either way)",
     )
     timing = p.add_mutually_exclusive_group()
     timing.add_argument(
@@ -295,9 +291,8 @@ def _require_playwright():
         from playwright.sync_api import sync_playwright  # noqa: WPS433
     except ImportError:
         die(
-            "Playwright not installed. Run:\n"
-            "  pip install -r requirements.txt\n"
-            "  playwright install chromium"
+            "Playwright not installed. Activate the venv, then run:\n"
+            "  pip install -r requirements.txt"
         )
     return sync_playwright
 
@@ -4614,6 +4609,7 @@ def main(argv: list[str] | None = None) -> int:
     with sync_playwright() as p:
         browser = None
         meta = None
+        page = None
         exit_code = 0
         try:
             browser, context, page, meta = launch_assist_browser(p, profile_dir=PROFILE_DIR)
@@ -4775,10 +4771,11 @@ def main(argv: list[str] | None = None) -> int:
             exit_code = 1
             log(f"Assist failed: {exc}")
             notify_macos("Assist failed", str(exc)[:120])
-            try:
-                page.wait_for_timeout(max(args.keep_open_sec, 3) * 1000)
-            except Exception:  # noqa: BLE001
-                pass
+            if page is not None:
+                try:
+                    page.wait_for_timeout(max(args.keep_open_sec, 3) * 1000)
+                except Exception:  # noqa: BLE001
+                    pass
         finally:
             # CRITICAL: disconnect only — do NOT quit Chrome (preserves login + checkout SSO)
             disconnect_assist_browser(browser, meta)
