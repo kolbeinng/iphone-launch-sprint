@@ -21,8 +21,10 @@ dry_run: true   # keep true. Script never clicks Đặt hàng.
 #               plus      the larger non-Pro
 #               base      the plain one (not Plus/Pro/Max)
 #               air       single-size families
-#   colors    MUST match a real Apple VN name. This is the one that breaks on
-#             launch night, because Apple renames colours every generation.
+#   colors    The one that breaks on launch night, because Apple renames
+#             colours every generation. Write the ENGLISH name: the page shows
+#             Vietnamese, but the DOM handle stays English and both are
+#             searched, so "cosmicorange" works as well as "Cam Vũ Trụ".
 #   storages  Same idea, but safe: "256" matches "256GB".
 #
 # You do NOT need screensizes — it is derived from model. You do NOT need
@@ -43,9 +45,8 @@ test:
   family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17-pro"
   product_prefs:
     colors:
-      - "Cam Vũ Trụ"
-      - "cosmicorange"
-      - 're:cam|orange|cosmic'
+      - "cosmicorange"      # English handle; the page reads 'Cam Vũ Trụ'
+      - 're:cosmic|orange|cam\s*vũ'
     storages: ["256GB", "256"]
     on_miss: wait_user
     user_pick_timeout_sec: 20
@@ -61,19 +62,24 @@ launch:
   family_urls:
     - "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro-max"
   product_prefs:
+    # USE THE ENGLISH NAME. The VN page shows Vietnamese labels, but the DOM
+    # handle underneath stays English, and a pref is matched against both:
+    #   dimensionColorcosmicorange = 'Cam Vũ Trụ'    (iPhone 17)
+    #   dimensionColorultramarine  = 'Xanh Lưu Ly'   (iPhone 16)
+    #   dimensionColorteal         = 'Xanh Mòng Két' (iPhone 16)
+    # Those translations are not guessable; the English handle is, because it
+    # is what the leaks report. So target English and let the regex cover VN.
+    #
     # RECHECK AFTER THE SEPT 9 KEYNOTE. Cam Vũ Trụ was iPhone 17 and is not
-    # expected to return. Rumoured iPhone 18 Pro: Dark Cherry (new headline),
-    # Sky/Light Blue, Dark Gray, Silver. Nothing is official until Apple VN
-    # publishes the page, so these are ordered guesses plus a wide regex net.
-    # The moment pre-orders open, run probe_family.py — it prints the real
-    # names, and you paste the right one in here.
+    # expected back. Rumoured iPhone 18 Pro: Dark Cherry (new headline), plus
+    # skyblue/lightblue, darkgray, silver — swap the word below to change pick.
+    # When pre-orders open, run probe_family.py: it prints the real handles.
     colors:
-      - "Đỏ Anh Đào"        # guess at Apple VN's name for Dark Cherry
-      - "darkcherry"        # Apple's slug is usually the English name
-      # Last resort. Dark Cherry is the only red in a lineup of blue, gray and
-      # silver, so anything red can only be the one we want. This still hits if
-      # Apple slugs it darkred/wine or names it Đỏ Thẫm instead of Anh Đào.
-      - 're:cherry|anh\s*đào|đào|burgundy|wine|đỏ'
+      - "cherry"            # hits dimensionColordarkcherry or ...cherry
+      # Last resort if Apple names it something else. Cherry is the only red in
+      # a lineup of blue, gray and silver, so red cannot select a wrong tile.
+      # Covers an English darkred/wine/burgundy handle or a Vietnamese label.
+      - 're:cherry|burgundy|wine|dark\s*red|anh\s*đào|đỏ'
     storages: ["256GB", "256"]
     on_miss: wait_user
     user_pick_timeout_sec: 30
