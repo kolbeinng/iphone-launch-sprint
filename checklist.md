@@ -23,7 +23,7 @@ With `mode: launch` on, the script **refuses** to put an iPhone 17, Fold or Air 
 
 ## Days before
 
-- [ ] Apple ID → Payment → the card's **billing address** is already Vietnam (city, quận, phường, no leftover postal code). Fixing this during checkout costs about 40 seconds.
+- [ ] Apple ID → Payment → the card's **billing address** is already Vietnam (city, quận, phường, no leftover postal code). The script never sets this one — Apple pulls it from your account when the saved card is selected. `sync_billing_address: true` will repair it mid-checkout if Apple complains, but that costs about 40 seconds at T-0, so get it right beforehand.
 - [ ] Your shipping address is **saved** in your Apple account. The script clicks a saved address in about 20ms; typing a new one is much slower.
 - [ ] `config.yaml` on this computer has your CVV, your address, your contact details.
 - [ ] You have done `--now` a few times and it reached Đặt hàng every time.

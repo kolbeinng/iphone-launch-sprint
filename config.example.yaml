@@ -87,7 +87,10 @@ checkout:
   location_district: "Quận Bình Thạnh"
   use_new_address: false
   cvv: ""
-  sync_billing_address: false
+  # Safety net, not a cost: with force off, this only fires when Apple actually
+  # opens the address editor, and it re-enables the automatic retry if the review
+  # step is ever blocked by a billing address error. Normal runs are unaffected.
+  sync_billing_address: true
   force_sync_billing_address: false
 
   shipping_address:
