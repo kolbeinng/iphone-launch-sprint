@@ -264,19 +264,63 @@ Wait for `(.venv)`, then run `python assist.py --now`.
 
 ---
 
-## The two commands
+## The commands
 
-That is the whole script. Everything else is setup.
+That is the whole thing. Everything else is setup.
 
 | Command | What it does |
 |---|---|
-| `--warm-only` | Signs in to Apple and checkout, then empties the bag. Run it before launch. |
-| `--now` | The full run. Stops at Đặt hàng. |
-| `--at-launch` | Same as `--now`, but waits until `launch_at` in your config first. |
+| `assist.py --warm-only` | Signs in to Apple and checkout, then empties the bag. Run it before launch. |
+| `assist.py --now` | The full run. Stops at Đặt hàng. |
+| `assist.py --at-launch` | Same as `--now`, but waits until `launch_at` in your config first. |
+| `probe_family.py` | Checks your config against the live Apple page. Changes nothing. |
 
-On a Mac put `python3 assist.py` in front. On Windows put `python assist.py` in front.
+On a Mac put `python3` in front. On Windows put `python` in front. So the full run on a Mac is `python3 assist.py --now`.
 
 Launch-night steps and what each checkout screen means: **[checklist.md](checklist.md)**.
+
+### What `probe_family.py` is for
+
+The script has to click the colour, size and storage you asked for in `config.yaml`. It finds them by matching the words you wrote against the words Apple shows on the page. If Apple uses a different word, the script cannot find your choice, so it stops and waits for you to click it by hand.
+
+That matters because Apple renames colours between iPhone generations. "Cam Vũ Trụ" exists on the iPhone 17 Pro but not on the iPhone 16, which uses "Hồng", "Trắng", "Đen" and so on.
+
+`probe_family.py` tells you in about 5 seconds whether your words match, before it costs you anything:
+
+```
+prefs: MATCH on 'Cam Vũ Trụ' → dimensionColorcosmicorange
+VERDICT: config would sprint clean
+```
+
+That is what you want to see. If instead it says:
+
+```
+prefs: NO MATCH for COLOR — tried ['Cam Vũ Trụ', 'cosmicorange']
+       available: [ultramarine='Xanh Lưu Ly', pink='Hồng', black='Đen']
+```
+
+then copy one of the names it lists under `available` into the `colors` list in `config.yaml` and run it again until it says `ALL CLEAR`.
+
+**Before the new iPhone is announced, expect this instead — it is normal, not a fault:**
+
+```
+h1:      'Chúng tôi không tìm được trang mà bạn đang tìm.'
+VERDICT: not a live configure page. The sprint would skip this URL.
+ATTENTION — at least one page is dead or would stop the sprint
+```
+
+Apple has not published the page yet, so there is nothing to check. You cannot get a useful answer until the phone is on sale. Run it on launch night the moment the page goes live, before the real run.
+
+### Trying a different phone without touching your real config
+
+Every command takes `-c` to point at a different config file. Your own `config.yaml` is left alone:
+
+```bash
+python3 probe_family.py -c /tmp/mytest.yaml
+python3 assist.py -c /tmp/mytest.yaml --now
+```
+
+Keep practice configs **outside** the project folder, as in `/tmp` above. Your config file contains your card's security code, and the project folder is a git repo.
 
 ---
 
@@ -293,3 +337,6 @@ Launch-night steps and what each checkout screen means: **[checklist.md](checkli
 | Apple asks you to sign in on every run | Chrome got closed. Run `--warm-only` again and leave it open. |
 | It seems stuck on a sign-in page | It is waiting for you. Finish the 2FA code in that Chrome window. |
 | Nothing happens for 10–20 seconds | That is Apple's page loading. Do not click anything. |
+| `USER PICK waiting for COLOR…` (or SIZE, or STORAGE) | Your words in `config.yaml` do not match what Apple shows. Click it yourself in Chrome and the run continues. Then fix your config with `probe_family.py`. |
+| `REFUSE: not iPhone 18` | A safety guard. It landed on the wrong phone's page and stopped rather than order the wrong thing. Nothing was added to your bag. |
+| `Could not empty bag` | Open the Apple bag in Chrome, remove everything by hand, then run again. |

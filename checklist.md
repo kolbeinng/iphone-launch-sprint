@@ -50,6 +50,8 @@ probe_family.py
 
 This is the one check that catches a launch-night surprise before it costs you the phone. It opens the page read-only and tells you whether your `config.yaml` colour, size and storage actually match what Apple published. Apple renames colours between generations — "Cam Vũ Trụ" exists on iPhone 17 Pro but not on iPhone 16, for example. If it prints `NO MATCH`, it also prints the real names, so you can paste the correct one into `config.yaml` and still sprint on time. `ALL CLEAR` means go.
 
+If it says `not a live configure page`, the page is not published yet. Wait and run it again — that is the same thing the real run would see.
+
 It never adds to the bag and never quits Chrome, so it is safe to run while warm.
 
 **T−0**
