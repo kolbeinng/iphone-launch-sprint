@@ -972,6 +972,26 @@ def _buy_page_snapshot(page) -> dict:
     return snap if isinstance(snap, dict) else {}
 
 
+def _family_year_matches(page, target: dict | None) -> bool:
+    """
+    Non-raising year check for a candidate configure page.
+
+    Before launch, a not-yet-published slug may redirect to the current
+    generation instead of 404ing, so a guessed URL can come back live, unlocked
+    and completely wrong. Phase A uses this to discard such a page and keep
+    looking, rather than handing it to the hard guard and killing the run.
+    """
+    year = str((target or {}).get("year") or "")
+    if not year:
+        return True
+    snap = _buy_page_snapshot(page)
+    url = (snap.get("url") or page.url or "").lower()
+    blob = _norm_match_hay(
+        f"{url} {snap.get('h1') or ''} {snap.get('title') or ''}"
+    )
+    return f"iphone {year}" in blob or f"iphone-{year}" in url
+
+
 def assert_family_is_order_target(page, target: dict) -> None:
     """Hard stop before trade-in if this is 17 / Fold / Air / wrong year."""
     year = str(target.get("year") or "")
@@ -1138,6 +1158,15 @@ def wait_family_configure_ready(
                 page.wait_for_timeout(min(poll_ms, 200))
                 continue
             if _configure_unlocked(page):
+                if not _family_year_matches(page, target):
+                    dead_404.add(url)
+                    log(
+                        f"FAMILY A  live but WRONG family — discarding {url} "
+                        f"(landed {page.url[:90]}, target iPhone "
+                        f"{(target or {}).get('year')})"
+                    )
+                    page.wait_for_timeout(min(poll_ms, 200))
+                    continue
                 elapsed = (time.perf_counter() - t_all) * 1000
                 log(f"FAMILY A  configure unlocked ({elapsed:.0f}ms): {page.url}")
                 if timer:
