@@ -38,21 +38,47 @@ Copy each step, paste it into Terminal, press Return. Do them in order.
 ### Step 1 — Install Chrome and Apple's developer tools
 
 ```bash
-if [ ! -d "/Applications/Google Chrome.app" ]; then
-  curl -fsSL -o /tmp/chrome.dmg "https://dl.google.com/chrome/mac/universal/stable/GGRO/googlechrome.dmg"
+if [ -d "/Applications/Google Chrome.app" ]; then
+  echo "Chrome: already installed - skipping"
+else
+  echo "Chrome: downloading, about 200 MB, this takes a minute or two..."
+  curl -# -fSL -o /tmp/chrome.dmg "https://dl.google.com/chrome/mac/universal/stable/GGRO/googlechrome.dmg"
+  echo "Chrome: installing..."
   yes | hdiutil attach -nobrowse -noverify /tmp/chrome.dmg
   cp -R "/Volumes/Google Chrome/Google Chrome.app" /Applications/
   hdiutil detach "/Volumes/Google Chrome"
   rm -f /tmp/chrome.dmg
+  echo "Chrome: installed"
 fi
-xcode-select -p >/dev/null 2>&1 || xcode-select --install
+
+if xcode-select -p >/dev/null 2>&1; then
+  echo "Developer tools: already installed - skipping"
+else
+  echo "Developer tools: asking macOS to install - click Install in the popup"
+  xcode-select --install
+fi
+
+echo
+echo "Chrome:  $( [ -d '/Applications/Google Chrome.app' ] && echo OK || echo MISSING )"
+echo "git:     $(git --version 2>/dev/null || echo MISSING)"
+echo "python3: $(python3 --version 2>&1 || echo MISSING)"
 ```
 
-This downloads Google Chrome and installs it, then asks macOS for the developer tools (that is where `git` comes from).
+This installs Google Chrome and asks macOS for the developer tools (that is where `git` comes from). Every line tells you what it is doing, and the last three lines are the summary that matters.
 
-**If a window pops up saying "Install the command line developer tools?"** — click **Install**, agree, and wait until it finishes. This can take 5 to 15 minutes. If no window appears, you already have them.
+**Read the summary.** All three should say `OK` or print a version number:
 
-When it is done, **close Terminal and open a new one.**
+```
+Chrome:  OK
+git:     git version 2.50.1 (Apple Git-155)
+python3: Python 3.14.6
+```
+
+`already installed - skipping` is a success, not a problem — it means that part was done before you started.
+
+**If a window pops up saying "Install the command line developer tools?"** — click **Install**, agree, and wait until it finishes. This can take 5 to 15 minutes. While it runs, `git` will still say `MISSING`; that is expected.
+
+When it is done, **close Terminal and open a new one**, then paste the block again. This time `git` should print a version.
 
 ### Step 2 — Check the tools, then download the project
 
