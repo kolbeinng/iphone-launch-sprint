@@ -70,7 +70,10 @@ launch:
     colors:
       - "Đỏ Anh Đào"        # guess at Apple VN's name for Dark Cherry
       - "darkcherry"        # Apple's slug is usually the English name
-      - 're:cherry|anh\s*đào|đào'
+      # Last resort. Dark Cherry is the only red in a lineup of blue, gray and
+      # silver, so anything red can only be the one we want. This still hits if
+      # Apple slugs it darkred/wine or names it Đỏ Thẫm instead of Anh Đào.
+      - 're:cherry|anh\s*đào|đào|burgundy|wine|đỏ'
     storages: ["256GB", "256"]
     on_miss: wait_user
     user_pick_timeout_sec: 30
