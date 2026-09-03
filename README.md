@@ -95,6 +95,8 @@ Both `git` and `python3` must print a version number. If either says "command no
 
 A browser window will open asking you to sign in to GitHub. Sign in as yourself. If you get **404**, you do not have access to the repo yet — ask the owner to add you.
 
+**Use the `git clone` above, not the green Code → Download ZIP button.** The ZIP unpacks to a folder called `iphone-launch-sprint-cursor-dynamic-sku-select`, because GitHub adds the branch name to it, so every `cd iphone-launch-sprint` in this guide would fail. It also is not a git checkout, so you cannot pull fixes later. If you already took the ZIP, rename the folder to `iphone-launch-sprint` and the rest of the guide works.
+
 ### Step 3 — Install the Python packages
 
 ```bash
@@ -209,6 +211,8 @@ Both must print a version number. If not, you are still in the old PowerShell wi
 
 A browser window will open asking you to sign in to GitHub. Sign in as yourself. If you get **404**, you do not have access to the repo yet — ask the owner to add you.
 
+**Use the `git clone` above, not the green Code → Download ZIP button.** The ZIP unpacks to a folder called `iphone-launch-sprint-cursor-dynamic-sku-select`, because GitHub adds the branch name to it, so every `cd iphone-launch-sprint` in this guide would fail. It also is not a git checkout, so you cannot pull fixes later. If you already took the ZIP, rename the folder to `iphone-launch-sprint` and the rest of the guide works.
+
 ### Step 3 — Install the Python packages
 
 ```powershell
@@ -276,6 +280,21 @@ cd $env:USERPROFILE\Projects\iphone-launch-sprint
 ```
 
 Wait for `(.venv)`, then run `python assist.py --now`.
+
+---
+
+## Getting fixes before launch night
+
+This is still being corrected as Apple's pages change, so pull before you rely on it. From the project folder, with `(.venv)` showing:
+
+```bash
+git pull
+python3 -m pip install -r requirements.txt
+```
+
+On Windows the second line is `py -3 -m pip install -r requirements.txt`.
+
+`git pull` never touches `config.yaml` — it is ignored by git, so your CVV and address stay as you left them. If `git pull` complains that you have local changes, you edited a tracked file by mistake; `git stash` puts it aside and lets the pull through.
 
 ---
 
