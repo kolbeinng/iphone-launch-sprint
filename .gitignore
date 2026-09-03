@@ -1,4 +1,8 @@
 config.yaml
+# Any personal config copy (config.launchtest.yaml, config.local.yaml, ...) holds
+# a real CVV and address. Ignore them all; the shipped template is the exception.
+config.*.yaml
+!config.example.yaml
 __pycache__/
 *.pyc
 .venv/
