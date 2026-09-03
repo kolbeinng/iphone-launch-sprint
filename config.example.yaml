@@ -14,7 +14,9 @@ dry_run: true   # keep true. Script never clicks Đặt hàng.
 # Only four things decide which phone lands in the bag:
 #
 #   year      The guard. Any page that is not this generation is refused before
-#             anything is added. Wrong year = the run stops, safely.
+#             anything is added. Wrong year = the run stops, safely. It is the
+#             word that must appear in "iPhone ___", so for a phone with no
+#             number use the family word: iPhone Air is year: air, model: air.
 #   model     Which size tile to click, and which guard to run. Valid values:
 #               pro-max   the larger Pro. Also verifies 6.9" really got picked.
 #               pro       the smaller Pro (never matches Pro Max)

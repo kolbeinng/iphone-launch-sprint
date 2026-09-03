@@ -968,6 +968,25 @@ def _size_prefs_for_model(model: str, size_opts: list[dict]) -> list[str]:
     return []
 
 
+_MODEL_WORDS = {
+    "pro-max": "Pro Max",
+    "pro": "Pro",
+    "plus": "Plus",
+    "air": "Air",
+    "base": "",
+}
+
+
+def _target_pretty(target: dict | None) -> str:
+    """'iPhone 18 Pro Max', or 'iPhone Air' when year is the family word."""
+    year = str((target or {}).get("year") or "").strip()
+    model = str((target or {}).get("model") or "").strip().lower().replace(" ", "-")
+    word = _MODEL_WORDS.get(model, model.replace("-", " ").title())
+    if year.lower() == model:
+        return f"iPhone {word}".strip() or "iPhone"
+    return f"iPhone {year} {word}".strip()
+
+
 def _derive_match_sets(target: dict | None) -> list[list[str]]:
     """Build hub match tokens from target.year + target.model.
 
@@ -1020,10 +1039,14 @@ def load_order_target(cfg: dict) -> dict:
         model = "pro-max"
     if not year:
         raise ConfigError(
-            "config target.year is required (17 for TEST, 18 for LAUNCH)."
+            "config target.year is required. Use the generation number (17, "
+            "18), or the family word when the phone has no number in its "
+            "name — iPhone Air is target.year: air, model: air."
         )
     if not model:
-        raise ConfigError("config target.model is required (pro-max).")
+        raise ConfigError(
+            "config target.model is required: pro-max, pro, plus, base or air."
+        )
     return {"year": year, "model": model}
 
 
@@ -1155,20 +1178,22 @@ def _wait_user_family_page(
     *,
     timeout_sec: float = 45.0,
     poll_ms: int = 100,
+    target: dict | None = None,
 ) -> str:
     """
     User opens/clicks the real family buy page in Chrome.
     Continues as soon as configure radios unlock (soft-404 ignored).
     """
+    want = _target_pretty(target) if target else "your target iPhone"
     log(
-        f"USER PICK  click iPhone 18 Pro Max on the hub NOW "
-        f"(NOT 17, NOT Fold, NOT Air) "
+        f"USER PICK  click {want} on the hub NOW "
+        f"(anything else will be refused) "
         f"(poll={poll_ms}ms, timeout={timeout_sec:.0f}s)"
     )
     beep()
     notify_macos(
-        "Assist — pick iPhone 18 Pro Max",
-        "Click iPhone 18 Pro / Pro Max on the hub. Do NOT click 17 or Fold.",
+        f"Assist — pick {want}",
+        f"Click {want} on the hub. Anything else is refused before the bag.",
     )
     t0 = time.perf_counter()
     deadline = t0 + max(5.0, timeout_sec)
@@ -1362,7 +1387,7 @@ def wait_family_configure_ready(
 
     # ----- Phase C: user clicks -----
     ready_url = _wait_user_family_page(
-        page, timeout_sec=user_pick_timeout_sec, poll_ms=100
+        page, timeout_sec=user_pick_timeout_sec, poll_ms=100, target=target
     )
     if timer:
         timer.since(t_all, "0a configure unlocked (user)", kind="poll")
@@ -4800,12 +4825,12 @@ def main(argv: list[str] | None = None) -> int:
     log("DRY-RUN assist — declines only; never purchases")
     if str(target.get("year")) == "18":
         log(
-            f"ORDER LOCK: iPhone {target['year']} {target['model']} — "
+            f"ORDER LOCK: {_target_pretty(target)} — "
             "timed run will REFUSE 17 / Fold / Air"
         )
     else:
         log(
-            f"TEST MODE: iPhone {target['year']} {target['model']} "
+            f"TEST MODE: {_target_pretty(target)} "
             "(config mode: test — set mode: launch on launch night)"
         )
     log(f"Persistent profile: {PROFILE_DIR}")

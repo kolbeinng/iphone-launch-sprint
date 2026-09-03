@@ -139,6 +139,8 @@ Leave `mode: test` and `dry_run: true` alone.
 
 You do not set the screen size or the hub search words. Both are worked out from `year` and `model`.
 
+`year` is really the word that has to appear in "iPhone ___", so a phone with no number in its name uses the family word instead. iPhone Air is `year: air` with `model: air`.
+
 ### Step 5 — Sign in to Apple
 
 ```bash
