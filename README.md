@@ -128,6 +128,17 @@ TextEdit opens. Change these to **your own** details, then press ⌘S to save an
 
 Leave `mode: test` and `dry_run: true` alone.
 
+**Which phone it picks** is four fields, and the file explains each one where you edit it:
+
+| Field | What it does |
+|---|---|
+| `year` | The guard. A page from any other generation is refused before anything is added to the bag |
+| `model` | `pro-max`, `pro`, `plus`, `base` or `air`. Picks the size tile and decides which check runs |
+| `colors` | The one that breaks on launch night. Write the English name |
+| `storages` | Forgiving — `"256"` matches `"256GB"` |
+
+You do not set the screen size or the hub search words. Both are worked out from `year` and `model`.
+
 ### Step 5 — Sign in to Apple
 
 ```bash
@@ -229,6 +240,8 @@ Notepad opens. Change these to **your own** details, then Save and close:
 
 Leave `mode: test` and `dry_run: true` alone.
 
+Which phone it picks is the same four fields as on the Mac side above: `year`, `model`, `colors`, `storages`. Write colours in English.
+
 ### Step 5 — Sign in to Apple
 
 ```powershell
@@ -288,18 +301,21 @@ That matters because Apple renames colours between iPhone generations. "Cam Vũ 
 `probe_family.py` tells you in about 5 seconds whether your words match, before it costs you anything:
 
 ```
-prefs: MATCH on 'Cam Vũ Trụ' → dimensionColorcosmicorange
+COLOR: [dimensionColorsilver='Bạc', dimensionColorcosmicorange='Cam Vũ Trụ', dimensionColordeepblue='Xanh Đậm']
+  prefs: MATCH on 'cosmicorange' → dimensionColorcosmicorange
 VERDICT: config would sprint clean
 ```
 
 That is what you want to see. If instead it says:
 
 ```
-prefs: NO MATCH for COLOR — tried ['Cam Vũ Trụ', 'cosmicorange']
-       available: [ultramarine='Xanh Lưu Ly', pink='Hồng', black='Đen']
+prefs: NO MATCH for COLOR — tried ['cherry', 're:cherry|burgundy|wine']
+       available: [dimensionColorultramarine='Xanh Lưu Ly', dimensionColorpink='Hồng']
 ```
 
 then copy one of the names it lists under `available` into the `colors` list in `config.yaml` and run it again until it says `ALL CLEAR`.
+
+**Write colours in English.** Look at the line above: the label Apple shows you is Vietnamese, but the handle in front of it stays English. The script matches your word against both, so `cosmicorange` picks the tile that reads "Cam Vũ Trụ". Prefer English, because the Vietnamese names cannot be guessed in advance — Apple translated Ultramarine as "Xanh Lưu Ly" and Teal as "Xanh Mòng Két". Either works, but only the English one is predictable before the page exists.
 
 **Before the new iPhone is announced, expect this instead — it is normal, not a fault:**
 
