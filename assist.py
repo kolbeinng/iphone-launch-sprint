@@ -925,6 +925,49 @@ _MODEL_HUB_TOKENS: dict[str, tuple[list[str], ...]] = {
 }
 
 
+# Which screensize tile belongs to each model, used when config omits
+# screensizes. Inch numbers change every generation (16 was 6.1/6.7, 17 is
+# 6.3/6.9), so match the model word instead. The lookahead is what stops "pro"
+# from also matching the "Pro Max" tile.
+_MODEL_SIZE_PREFS: dict[str, list[str]] = {
+    "pro-max": [r"re:pro\s*max"],
+    "pro": [r"re:pro(?!\s*max)"],
+    "plus": [r"re:plus"],
+}
+
+
+def _size_prefs_for_model(model: str, size_opts: list[dict]) -> list[str]:
+    """Screensize prefs for a model, or [] when it cannot be told apart.
+
+    Returning [] is deliberate: the caller then falls through to on_miss and
+    asks you to click, which beats guessing the wrong phone.
+    """
+    prefs = _MODEL_SIZE_PREFS.get(model)
+    if prefs:
+        return list(prefs)
+    enabled = [o for o in size_opts if not o.get("disabled")] or list(size_opts)
+    if model == "base":
+        # "Base" means the tile that is *not* Plus/Pro/Max. Prefs are matched
+        # per field, and the plain tile's autom ("...6_7inch") carries no such
+        # word, so a negative pattern would match it too. Name the tile instead.
+        plain = [
+            o
+            for o in enabled
+            if not re.search(
+                r"plus|pro|max",
+                _norm_match_hay(
+                    f"{o.get('autom') or ''} {o.get('label') or ''} "
+                    f"{o.get('value') or ''}"
+                ),
+            )
+        ]
+        if len(plain) == 1:
+            return [str(plain[0].get("autom") or plain[0].get("value") or "")]
+    if len(enabled) == 1:
+        return [str(enabled[0].get("autom") or enabled[0].get("value") or "")]
+    return []
+
+
 def _derive_match_sets(target: dict | None) -> list[list[str]]:
     """Build hub match tokens from target.year + target.model.
 
@@ -1074,6 +1117,36 @@ def assert_sku_is_pro_max(page, target: dict) -> None:
         raise RuntimeError(
             f"REFUSE: screensize is not Pro Max 6.9 (got {checked.get('label')!r} "
             f"/ {checked.get('autom')!r}). Will not add to bag."
+        )
+
+
+def assert_sku_matches_model(page, target: dict) -> None:
+    """Refuse a screensize that contradicts target.model.
+
+    Pro Max has its own stricter guard above. This covers the rest, so a
+    `model: pro` target can no longer walk off with a Pro Max in the bag.
+    """
+    model = str(target.get("model") or "pro-max").strip().lower().replace(" ", "-")
+    if model == "pro-max":
+        return
+    sizes = _list_dimension_options(page, "dimensionScreensize")
+    if not sizes:
+        return  # single-size family (Air, 17e): nothing to contradict
+    prefs = _size_prefs_for_model(model, sizes)
+    if not prefs:
+        return  # unknown model: we never picked it, so we cannot judge it
+    checked = next((s for s in sizes if s.get("checked")), None)
+    if not checked:
+        raise RuntimeError("REFUSE: no screensize selected. Will not add to bag.")
+    ok = any(_pref_matches(checked, p) for p in prefs)
+    log(
+        f"TARGET CHECK sku: model={model} "
+        f"selected={checked.get('autom')!r} ok={ok}"
+    )
+    if not ok:
+        raise RuntimeError(
+            f"REFUSE: screensize {checked.get('label')!r} does not match "
+            f"model {model!r}. Will not add to bag."
         )
 
 
@@ -1527,6 +1600,7 @@ def select_product_dimensions(
     prefs: dict,
     *,
     timer: StageTimer | None = None,
+    target: dict | None = None,
 ) -> None:
     """
     Family-page SKU pick (order Apple uses):
@@ -1562,10 +1636,23 @@ def select_product_dimensions(
 
     if size_opts:
         t_size = time.perf_counter()
+        size_prefs = screensizes
+        if not size_prefs:
+            model = (
+                str((target or {}).get("model") or "pro-max")
+                .strip()
+                .lower()
+                .replace(" ", "-")
+            )
+            size_prefs = _size_prefs_for_model(model, size_opts)
+            log(
+                f"screensizes not set — model {model!r} → prefs {size_prefs!r}"
+                f"{' (ambiguous, will ask you to click)' if not size_prefs else ''}"
+            )
         _select_dimension_by_prefs(
             page,
             "dimensionScreensize",
-            screensizes or ["Pro Max", "6,9", "6.9", "6_9inch", "6_9"],
+            size_prefs,
             mark="0d screensize",
             **dim_kwargs,
         )
@@ -4853,8 +4940,10 @@ def main(argv: list[str] | None = None) -> int:
                         page,
                         product_prefs or {},
                         timer=timer,
+                        target=target,
                     )
                     assert_sku_is_pro_max(page, target)
+                    assert_sku_matches_model(page, target)
                 else:
                     log(f"Opening product (timed run): {product_url}")
                     open_product_page(page, product_url)

@@ -5,23 +5,32 @@
 dry_run: true   # keep true. Script never clicks Đặt hàng.
 
 # =============================================================================
-# PHONE PICKER — change ONLY this line on launch night
+# PHONE PICKER — on launch night you change ONE line: mode
 # =============================================================================
 #
 #   mode: test    → iPhone 17 Pro Max (practice, live now)
 #   mode: launch  → iPhone 18 Pro Max (launch night)
 #
-# Both blocks stay uncommented. Confirm launch_at when Apple announces VN time.
+# Only four things decide which phone lands in the bag:
 #
-# Only two fields decide which phone you get:
-#   year:  the guard. Any page that isn't this generation is refused before
-#          anything reaches the bag. Get this right or the run stops.
-#   model: pro-max also verifies the 6.9" size really got selected. Use base,
-#          plus, pro or air for those; only pro-max turns that check on.
+#   year      The guard. Any page that is not this generation is refused before
+#             anything is added. Wrong year = the run stops, safely.
+#   model     Which size tile to click, and which guard to run. Valid values:
+#               pro-max   the larger Pro. Also verifies 6.9" really got picked.
+#               pro       the smaller Pro (never matches Pro Max)
+#               plus      the larger non-Pro
+#               base      the plain one (not Plus/Pro/Max)
+#               air       single-size families
+#   colors    MUST match a real Apple VN name. This is the one that breaks on
+#             launch night, because Apple renames colours every generation.
+#   storages  Same idea, but safe: "256" matches "256GB".
 #
-# family_url is a guess at Apple's URL. If it 404s, the script reads the buy
-# hub and opens the right card using year + model, so a wrong guess costs a
-# second, not the phone.
+# You do NOT need screensizes — it is derived from model. You do NOT need
+# family_match — it is derived from year + model. Leave both out.
+#
+# If a colour does not match, the script beeps and waits for you to click it in
+# Chrome (on_miss: wait_user), then carries on. It never silently buys another
+# colour, because allow_failover is false.
 # =============================================================================
 
 mode: test
@@ -33,35 +42,39 @@ test:
   label: "TEST iPhone 17 Pro Max 256GB Cam Vũ Trụ"
   family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17-pro"
   product_prefs:
-    screensizes: ["Pro Max", "6,9", "6.9", "6_9inch", "6_9"]
     colors:
       - "Cam Vũ Trụ"
       - "cosmicorange"
-      - "re:cam|orange|cosmic"
+      - 're:cam|orange|cosmic'
+    storages: ["256GB", "256"]
     on_miss: wait_user
     user_pick_timeout_sec: 20
     allow_failover: false
-    storages: ["256GB", "256gb", "256", "re:256"]
 
-# Fold is NOT listed — not expected on apple.com/vn.
+# Fold / Ultra is NOT listed — not the VN order target.
 launch:
   target:
     year: 18
     model: pro-max
-  label: "iPhone 18 Pro Max 256GB Cam Vũ Trụ"
+  label: "iPhone 18 Pro Max 256GB Đỏ Anh Đào"
   family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro"
   family_urls:
     - "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro-max"
   product_prefs:
-    screensizes: ["Pro Max", "6,9", "6.9", "6_9inch", "6_9"]
+    # RECHECK AFTER THE SEPT 9 KEYNOTE. Cam Vũ Trụ was iPhone 17 and is not
+    # expected to return. Rumoured iPhone 18 Pro: Dark Cherry (new headline),
+    # Sky/Light Blue, Dark Gray, Silver. Nothing is official until Apple VN
+    # publishes the page, so these are ordered guesses plus a wide regex net.
+    # The moment pre-orders open, run probe_family.py — it prints the real
+    # names, and you paste the right one in here.
     colors:
-      - "Cam Vũ Trụ"
-      - "cosmicorange"
-      - "re:cam|orange|cosmic"
+      - "Đỏ Anh Đào"        # guess at Apple VN's name for Dark Cherry
+      - "darkcherry"        # Apple's slug is usually the English name
+      - 're:cherry|anh\s*đào|đào'
+    storages: ["256GB", "256"]
     on_miss: wait_user
-    user_pick_timeout_sec: 20
+    user_pick_timeout_sec: 30
     allow_failover: false
-    storages: ["256GB", "256gb", "256", "re:256"]
 
 
 # =============================================================================
@@ -78,7 +91,19 @@ product_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17/m%C3%A0n-h%C3%A
 warm_url: "https://www.apple.com/vn/shop/goto/account"
 session_url: "https://www.apple.com/vn/shop/goto/account"
 
-launch_at: "2026-09-19T19:00:00"
+# CONFIRM THIS AFTER THE SEPT 9 KEYNOTE — it is the one value that makes the
+# whole run pointless if it is wrong.
+#
+# Keynote is Wed 9 Sept 2026. The sprint you care about is PRE-ORDER, not the
+# on-sale day: pre-order is when stock and delivery slots actually run out.
+# Press reports expect pre-orders on Sat 12 Sept (moved off Fri 11 Sept, the
+# 25th anniversary of 9/11), with delivery from Fri 18 Sept, VN in wave one.
+#
+# 19:00 VN = 05:00 US Pacific, which is Apple's usual pre-order hour. One leak
+# says 00:00 Pacific this year instead, which would be 14:00 VN. Unconfirmed.
+#
+# If unsure, start --at-launch early: it just waits, and the watcher polls.
+launch_at: "2026-09-12T19:00:00"
 timezone: "Asia/Ho_Chi_Minh"
 warm_minutes_before: 10
 browser: "Google Chrome"
