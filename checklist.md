@@ -42,6 +42,16 @@ Use the **same computer** you practised on, and keep **the same Chrome window** 
 
 Phone in your hand for 2FA. It must finish with the bag empty. If Chrome is already open and warm from earlier today, you can skip this.
 
+**The moment the page goes live** (optional, takes about 5 seconds)
+
+```
+probe_family.py
+```
+
+This is the one check that catches a launch-night surprise before it costs you the phone. It opens the page read-only and tells you whether your `config.yaml` colour, size and storage actually match what Apple published. Apple renames colours between generations — "Cam Vũ Trụ" exists on iPhone 17 Pro but not on iPhone 16, for example. If it prints `NO MATCH`, it also prints the real names, so you can paste the correct one into `config.yaml` and still sprint on time. `ALL CLEAR` means go.
+
+It never adds to the bag and never quits Chrome, so it is safe to run while warm.
+
 **T−0**
 
 ```
