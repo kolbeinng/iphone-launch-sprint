@@ -12,6 +12,16 @@ dry_run: true   # keep true. Script never clicks Đặt hàng.
 #   mode: launch  → iPhone 18 Pro Max (launch night)
 #
 # Both blocks stay uncommented. Confirm launch_at when Apple announces VN time.
+#
+# Only two fields decide which phone you get:
+#   year:  the guard. Any page that isn't this generation is refused before
+#          anything reaches the bag. Get this right or the run stops.
+#   model: pro-max also verifies the 6.9" size really got selected. Use base,
+#          plus, pro or air for those; only pro-max turns that check on.
+#
+# family_url is a guess at Apple's URL. If it 404s, the script reads the buy
+# hub and opens the right card using year + model, so a wrong guess costs a
+# second, not the phone.
 # =============================================================================
 
 mode: test
@@ -22,7 +32,6 @@ test:
     model: pro-max
   label: "TEST iPhone 17 Pro Max 256GB Cam Vũ Trụ"
   family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17-pro"
-  family_match: ["17", "Pro Max"]
   product_prefs:
     screensizes: ["Pro Max", "6,9", "6.9", "6_9inch", "6_9"]
     colors:
@@ -43,7 +52,6 @@ launch:
   family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro"
   family_urls:
     - "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro-max"
-  family_match: ["18", "Pro Max"]
   product_prefs:
     screensizes: ["Pro Max", "6,9", "6.9", "6_9inch", "6_9"]
     colors:

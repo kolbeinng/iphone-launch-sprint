@@ -913,6 +913,36 @@ def _normalize_match_sets(family_match: list | None) -> list[list[str]]:
     return out
 
 
+# How each model is worded on Apple's hub card, strictest first. Apple normally
+# spells out both variants ("iPhone 17 Pro & iPhone 17 Pro Max"), so "Pro Max"
+# hits; the looser "Pro" covers a shortened launch card. Models not listed match
+# on the year alone, which is right for base / Plus-sharing pages like iPhone 16.
+_MODEL_HUB_TOKENS: dict[str, tuple[list[str], ...]] = {
+    "pro-max": (["Pro Max"], ["Pro"]),
+    "pro": (["Pro"],),
+    "plus": (["Plus"],),
+    "air": (["Air"],),
+}
+
+
+def _derive_match_sets(target: dict | None) -> list[list[str]]:
+    """Build hub match tokens from target.year + target.model.
+
+    Lets config omit family_match entirely: year and model already say which
+    card we want, so repeating it is just another line to get wrong.
+    """
+    year = str((target or {}).get("year") or "").strip()
+    if not year:
+        return []
+    model = str((target or {}).get("model") or "").strip().lower()
+    out: list[list[str]] = []
+    for extra in _MODEL_HUB_TOKENS.get(model, ([],)):
+        tokens = [year] + list(extra)
+        if tokens not in out:
+            out.append(tokens)
+    return out
+
+
 def _hub_link_matches(link: dict, family_match: list[str]) -> bool:
     """All match tokens must appear in href or text (case-insensitive)."""
     tokens = [str(t).strip().lower() for t in family_match if str(t).strip()]
@@ -4647,15 +4677,16 @@ def main(argv: list[str] | None = None) -> int:
         # Keep nesting intact: a list of token lists means "try strictest first".
         family_match = _normalize_match_sets(family_match_cfg)
         target = load_order_target(cfg)
-        if str(target.get("year")) == "18":
-            fallback = ["18", "Pro"]
-            if not family_match:
-                family_match = [["18", "Pro Max"], fallback]
-                log(f"family_match empty — defaulting to {family_match!r}")
-            elif fallback not in family_match:
-                # Apple may shorten the hub card to just "iPhone 18 Pro".
-                family_match.append(fallback)
-                log(f"family_match — added looser fallback {fallback!r}")
+        derived = _derive_match_sets(target)
+        if not family_match:
+            family_match = derived
+            log(f"family_match not set — derived {family_match!r} from target")
+        else:
+            # Explicit config wins; only append looser sets to try after it.
+            for tokens in derived:
+                if tokens not in family_match:
+                    family_match.append(tokens)
+                    log(f"family_match — added fallback {tokens!r}")
         product_prefs = cfg.get("product_prefs") if isinstance(cfg.get("product_prefs"), dict) else {}
         use_dynamic = bool(product_prefs) or bool(family_candidates)
         if str(target.get("year")) == "18":
