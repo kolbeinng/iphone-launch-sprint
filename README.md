@@ -364,7 +364,7 @@ T-0: 24.0s left
 T-0 — GO
 ```
 
-Once it prints `GO`, you do not touch anything. The script drives Chrome. About a minute later it reaches the Đặt hàng button, stops, and beeps. That is the moment you click Đặt hàng yourself. The script never clicks it.
+Once it prints `GO`, you do not touch anything. The bag was already emptied when `--at-launch` started, so T-0 opens the buy page straight away. About a minute later it reaches the Đặt hàng button, stops, and beeps. That is the moment you click Đặt hàng yourself. The script never clicks it.
 
 The whole point is that you can start `--at-launch` **five, ten, thirty minutes** before Apple opens. It just waits. Do not try to time it. If you are not sure of the exact minute, start it earlier — waiting is free, missing it is not.
 

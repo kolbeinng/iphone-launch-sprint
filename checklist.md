@@ -68,7 +68,7 @@ It never adds to the bag and never quits Chrome, so it is safe to run while warm
 --at-launch
 ```
 
-This sleeps until `launch_at`, then goes. Do not add a safety margin after the launch time — start it early and let it wait.
+This empties the bag first, sleeps until `launch_at`, then opens the buy page. Do not add a safety margin after the launch time — start it early and let it wait.
 
 **Then you click Đặt hàng.**
 

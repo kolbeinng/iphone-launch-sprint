@@ -374,12 +374,16 @@ def open_url(url: str, browser: str) -> None:
     subprocess.run(["xdg-open", encoded], check=False)  # noqa: S603
 
 
-def notify_macos(title: str, message: str) -> None:
+def notify_macos(title: str, message: str, *, sound: str | None = None) -> None:
     """Best-effort desktop notification (name kept for call-site compatibility)."""
     if IS_MAC:
         t = title.replace("\\", "\\\\").replace('"', '\\"')
         m = message.replace("\\", "\\\\").replace('"', '\\"')
-        script = f'display notification "{m}" with title "{t}"'
+        extra = ""
+        if sound:
+            s = sound.replace("\\", "\\\\").replace('"', '\\"')
+            extra = f' sound name "{s}"'
+        script = f'display notification "{m}" with title "{t}"{extra}'
         subprocess.run(["osascript", "-e", script], check=False)  # noqa: S603
         return
     if IS_WINDOWS:

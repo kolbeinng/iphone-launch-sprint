@@ -605,6 +605,7 @@ def _wait_user_dimension_pick(
     baseline_key: str = "",
     timeout_sec: float = 20.0,
     poll_ms: int = 50,
+    asked: list[str] | None = None,
 ) -> dict:
     """
     Fast handoff: user clicks the radio in Chrome; we continue within ~poll_ms.
@@ -618,9 +619,14 @@ def _wait_user_dimension_pick(
         f"(poll={poll_ms}ms, timeout={timeout_sec:.0f}s) — available=[{available}]"
     )
     beep()
+    asked_s = ", ".join(str(x) for x in (asked or []) if str(x).strip())
     notify_macos(
-        f"Assist — click {pretty}",
-        f"No auto-match. Click {pretty} in Chrome — script continues instantly.",
+        f"Assist — click {pretty} in Chrome NOW",
+        (
+            (f"{asked_s} is not on the page. " if asked_s else "No auto-match. ")
+            + f"Click {pretty}. Have: {available[:140]}"
+        ),
+        sound="Basso",
     )
 
     t0 = time.perf_counter()
@@ -676,11 +682,16 @@ def _list_dimension_options(page, dimension_name: str) -> list[dict]:
             const labelEl = lab || el.closest('label');
             const label = ((labelEl && labelEl.innerText) || '')
               .replace(/\\s+/g, ' ').trim();
+            const er = el.getBoundingClientRect();
+            const lr = labelEl ? labelEl.getBoundingClientRect() : null;
+            const visible = (er.width > 1 && er.height > 1)
+              || !!(lr && lr.width > 1 && lr.height > 1);
             return {
               autom: el.getAttribute('data-autom') || '',
               value: el.value || '',
               checked: !!el.checked,
               disabled: !!el.disabled,
+              visible,
               label: label.slice(0, 120),
             };
           });
@@ -759,7 +770,17 @@ def _select_dimension_by_prefs(
                 f"No pref matched for {dimension_name}; prefs={prefs!r}; "
                 f"available=[{available}]"
             )
-            if miss_mode == "failover":
+            if len(enabled) == 1:
+                # Nothing to click: Apple only listed one tile (sold-out
+                # capacities disappear). Waiting for a user pick can never
+                # succeed if that tile is already checked.
+                chosen = enabled[0]
+                log(
+                    f"ONLY ONE { _dimension_pretty(dimension_name) } option — "
+                    f"taking {chosen.get('autom') or chosen.get('value')} "
+                    f"({(chosen.get('label') or '')[:40]})"
+                )
+            elif miss_mode == "failover":
                 chosen = enabled[0]
                 log(
                     f"WARNING: failover → "
@@ -774,6 +795,7 @@ def _select_dimension_by_prefs(
                     baseline_key=baseline,
                     timeout_sec=user_pick_timeout_sec,
                     poll_ms=50,
+                    asked=prefs,
                 )
                 user_picked = True
             else:
@@ -797,6 +819,20 @@ def _select_dimension_by_prefs(
             log(
                 f"Selected {dimension_name}: {picked} "
                 f"(user click, wall={wall_ms:.0f}ms)"
+            )
+            if timer and mark:
+                timer.record(mark, wall_ms, kind="click")
+            return str(picked)
+
+        # Sold-out / single SKU: Apple leaves a 0×0 radio in the DOM (checked)
+        # and no tile. Clicking it times out on scroll_into_view. Continue.
+        if chosen and not chosen.get("visible", True):
+            picked = chosen.get("autom") or chosen.get("value") or "?"
+            wall_ms = (time.perf_counter() - t0) * 1000
+            log(
+                f"No visible {_dimension_pretty(dimension_name)} button — "
+                f"Apple already set {picked} "
+                f"({(chosen.get('label') or '')[:40]}), skip click ({wall_ms:.0f}ms)"
             )
             if timer and mark:
                 timer.record(mark, wall_ms, kind="click")
@@ -3451,6 +3487,12 @@ def empty_bag(page, *, max_rounds: int = 12, reason: str = "start clean") -> Non
         )
         if not removed:
             log(f"WARNING: could not find bag remove control (round {round_i})")
+            # Apple hides the Xóa button while the line is re-rendering. Checkout
+            # still present means the item is still there — wait and try again
+            # instead of giving up mid-update.
+            if _bag_has_checkout(page) or not _bag_is_empty(page):
+                page.wait_for_timeout(800)
+                continue
             break
         page.wait_for_timeout(900)
         if "/shop/bag" not in page.url.lower():
@@ -3464,8 +3506,20 @@ def empty_bag(page, *, max_rounds: int = 12, reason: str = "start clean") -> Non
         if not _bag_has_checkout(page):
             log("Bag looks clear (no checkout button)")
         else:
+            leftover = ""
+            try:
+                leftover = page.evaluate(
+                    """() => {
+                      const n = document.querySelector('[data-autom="bag-item-name"]');
+                      return n ? (n.innerText || '').replace(/\\s+/g, ' ').trim() : '';
+                    }"""
+                )
+            except Exception:  # noqa: BLE001
+                leftover = ""
+            hint = f" (still in bag: {leftover})" if leftover else ""
             raise RuntimeError(
-                "Could not empty bag — remove items manually, then re-run"
+                "Could not empty bag — click Xóa in Chrome, then re-run"
+                f"{hint}"
             )
 
 
@@ -4886,21 +4940,30 @@ def main(argv: list[str] | None = None) -> int:
                 )
 
             # Timed wait AFTER warm Chrome is attached — then sprint immediately at T-0
+            wait_then_sprint = False
             if not (args.setup_login or args.warm_only):
                 tz = config_timezone(cfg)
                 if args.in_duration:
                     t_go = now_in_tz(tz) + parse_duration(args.in_duration)
                     log(f"Timer practice: sprint at {format_ts(t_go)} (--in {args.in_duration})")
-                    wait_until(t_go, tz, "T-0 practice")
+                    wait_then_sprint = True
                 elif args.at_launch:
                     t_go = parse_launch_at(cfg)
                     log(f"Launch timer: sprint at {format_ts(t_go)} (--at-launch)")
-                    if now_in_tz(tz) < t_go:
+                    wait_then_sprint = True
+                else:
+                    log("No --at-launch / --in — sprinting immediately (--now default)")
+                # Empty off the T-0 clock so GO opens the buy page, not /bag.
+                # --now still empties as the first timed step (no countdown).
+                if wait_then_sprint:
+                    empty_bag(page, reason="before countdown")
+                    log("Bag empty — at T-0 we go straight to buy")
+                    if args.in_duration:
+                        wait_until(t_go, tz, "T-0 practice")
+                    elif now_in_tz(tz) < t_go:
                         wait_until(t_go, tz, "T-0")
                     else:
                         log(f"launch_at already past ({format_ts(t_go)}) — sprinting NOW")
-                else:
-                    log("No --at-launch / --in — sprinting immediately (--now default)")
 
             do_warm = args.setup_login or args.warm_only or args.warmup_before_run
             if do_warm:
@@ -4938,8 +5001,9 @@ def main(argv: list[str] | None = None) -> int:
                     )
 
                 timer = StageTimer()
-                empty_bag(page, reason="timed run")
-                timer.mark("0 empty bag", kind="nav")
+                if not wait_then_sprint:
+                    empty_bag(page, reason="timed run")
+                    timer.mark("0 empty bag", kind="nav")
                 if use_dynamic:
                     candidates = list(family_candidates)
                     if not candidates:

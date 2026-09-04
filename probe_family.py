@@ -98,6 +98,11 @@ def report_prefs(opts: list[dict], prefs: list[str], pretty: str) -> bool:
     )
     log(f"    prefs: NO MATCH for {pretty} — tried {prefs!r}")
     log(f"           available: [{available}]")
+    if len(pool) == 1:
+        log(
+            f"           only one {pretty} tile — the run would take it and continue"
+        )
+        return True
     return False
 
 
