@@ -399,6 +399,25 @@ def notify_macos(title: str, message: str, *, sound: str | None = None) -> None:
     )
 
 
+def alert_attention() -> None:
+    """Louder than beep() — used when a human must look at Chrome now.
+
+    macOS notification sounds are the same tiny beep and are often swallowed
+    by Focus / notification settings. afplay hits the speaker directly.
+    """
+    if IS_MAC:
+        for name in ("Sosumi.aiff", "Glass.aiff", "Hero.aiff"):
+            path = f"/System/Library/Sounds/{name}"
+            if os.path.isfile(path):
+                subprocess.Popen(  # noqa: S603
+                    ["afplay", path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                return
+    beep()
+
+
 def beep() -> None:
     if IS_MAC:
         subprocess.run(["osascript", "-e", "beep"], check=False)  # noqa: S603

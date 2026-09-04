@@ -28,6 +28,7 @@ from sprint_common import (
     DEFAULT_SESSION_URL,
     ROOT,
     ConfigError,
+    alert_attention,
     beep,
     click_labels,
     config_timezone,
@@ -618,7 +619,7 @@ def _wait_user_dimension_pick(
         f"USER PICK  click {pretty} in Chrome NOW "
         f"(poll={poll_ms}ms, timeout={timeout_sec:.0f}s) — available=[{available}]"
     )
-    beep()
+    alert_attention()
     asked_s = ", ".join(str(x) for x in (asked or []) if str(x).strip())
     notify_macos(
         f"Assist — click {pretty} in Chrome NOW",
@@ -626,7 +627,6 @@ def _wait_user_dimension_pick(
             (f"{asked_s} is not on the page. " if asked_s else "No auto-match. ")
             + f"Click {pretty}. Have: {available[:140]}"
         ),
-        sound="Basso",
     )
 
     t0 = time.perf_counter()
