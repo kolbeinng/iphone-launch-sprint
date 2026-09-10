@@ -140,12 +140,10 @@ checkout:
   sync_billing_address: true
   force_sync_billing_address: false
 
-  # Your details. This file is PUBLIC on GitHub — put the real values only in
-  # config.yaml, which is gitignored and never leaves your computer.
   shipping_address:
-    first_name: "YOUR FIRST NAME"
-    last_name: "YOUR LAST NAME"
-    street: "YOUR STREET ADDRESS"
+    first_name: "Võ Văn"
+    last_name: "Quân"
+    street: "354/89/13 phan văn trị phường 11 tphcm"
     street2: ""
     state: "Thành phố Hồ Chí Minh"
     city: "Quận Bình Thạnh"
@@ -153,8 +151,8 @@ checkout:
     postal_code: ""
 
   contact:
-    email: "you@example.com"
-    phone: "0900000000"
+    email: "Quanvo1992@gmail.com"
+    phone: "0969515515"
 
 watcher:
   enabled: true
