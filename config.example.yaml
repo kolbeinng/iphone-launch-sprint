@@ -39,20 +39,43 @@ dry_run: true   # keep true. Script never clicks Đặt hàng.
 
 mode: test
 
+# Colour rehearsal on the real iPhone 18 Pro page. Pre-order is not open, so
+# this run ends somewhere in the configurator — it cannot reach the bag. The
+# point is to watch which colour tile it resolves to.
+#
+# Colours are tried in order and the first one PRESENT on the page wins, so as
+# written this picks burgundy. Swap the two lines to rehearse glacier instead.
 test:
   target:
-    year: 17
+    year: 18
     model: pro-max
-  label: "TEST iPhone 17 Pro Max 256GB Cam Vũ Trụ"
-  family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17-pro"
+  label: "TEST iPhone 18 Pro Max 256GB Burgundy"
+  family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro"
   product_prefs:
     colors:
-      - "cosmicorange"      # English handle; the page reads 'Cam Vũ Trụ'
-      - 're:cosmic|orange|cam\s*vũ'
+      - "burgundy"          # page reads 'Đỏ Burgundy'
+      - "glacier"           # page reads 'Băng Thanh'
     storages: ["256GB", "256"]
     on_miss: wait_user
     user_pick_timeout_sec: 20
     allow_failover: false
+
+# Practice on a phone you can actually buy today — restore this block when you
+# want a full run-through to the Đặt hàng page.
+# test:
+#   target:
+#     year: 17
+#     model: pro-max
+#   label: "TEST iPhone 17 Pro Max 256GB Cam Vũ Trụ"
+#   family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17-pro"
+#   product_prefs:
+#     colors:
+#       - "cosmicorange"    # English handle; the page reads 'Cam Vũ Trụ'
+#       - 're:cosmic|orange|cam\s*vũ'
+#     storages: ["256GB", "256"]
+#     on_miss: wait_user
+#     user_pick_timeout_sec: 20
+#     allow_failover: false
 
 # iPhone Duo (foldable) is NOT the order target — VN pre-order 16 Oct.
 launch:
