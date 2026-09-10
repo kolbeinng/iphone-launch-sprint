@@ -11,16 +11,17 @@ The script never types your Apple password and never clicks **Đặt hàng**. Yo
 | Mode | Phone |
 |---|---|
 | `mode: test` | iPhone 17 Pro Max · 256GB · Cam Vũ Trụ — practice, on sale now |
-| `mode: launch` | iPhone 18 Pro Max · 256GB · Dark Cherry (colour name unconfirmed) |
+| `mode: launch` | iPhone 18 Pro Max · 256GB · Burgundy |
 
 On launch night you change **one line** in `config.yaml`: `mode: test` → `mode: launch`.
 
-**Then fix two things Apple only confirms at the keynote:**
+**Keynote (9 Sept 2026) is done. Official facts:**
 
-- `launch_at` — the sprint that matters is the **pre-order**, not the on-sale day, because that is when stock and delivery slots run out. Reports expect pre-orders Sat 12 Sept, delivery from Fri 18 Sept, Vietnam in wave one. 19:00 VN is Apple's usual 05:00 Pacific pre-order hour, but one report says 00:00 Pacific this year, which would be 14:00 VN. If unsure, start `--at-launch` early: it only waits.
-- `colors` — "Cam Vũ Trụ" was iPhone 17 and is not expected back. The rumoured iPhone 18 Pro lineup is Dark Cherry, Sky/Light Blue, Dark Gray and Silver. Write the **English** name: the page reads Vietnamese but the handle underneath stays English, and Vietnamese names are not guessable (Ultramarine shipped as "Xanh Lưu Ly"). `probe_family.py` prints the real ones.
+- `launch_at` is **Saturday 12 Sept 2026, 19:00 Vietnam** (5:00 a.m. PT). Vietnam is in the first wave. Phones arrive Friday 18 Sept. Start `--at-launch` early; it empties the bag, then waits.
+- Colours are **black, silver, glacier, burgundy**. We want burgundy (the new headline colour — not Dark Cherry). Write `burgundy` in English. `probe_family.py` the moment the buy page is live, and paste the English handle if it is not exactly `burgundy`.
+- The foldable is **iPhone Duo**, not Ultra. It is not this order (VN pre-order 16 Oct).
 
-With `mode: launch` on, the script **refuses** to put an iPhone 17, Fold or Air in the bag. If Apple's page is not up yet, it keeps looking rather than buying the wrong phone.
+With `mode: launch` on, the script **refuses** to put an iPhone 17, Duo, Fold or Air in the bag. If Apple's page is not up yet, it keeps looking rather than buying the wrong phone.
 
 `--warm-only` always uses an iPhone 17 link, even on launch night. That is only to keep you signed in, and it empties the bag afterwards. It is not your order.
 
@@ -56,7 +57,7 @@ probe_family.py
 
 This is the one check that catches a launch-night surprise before it costs you the phone. It opens the page read-only and tells you whether your `config.yaml` colour, size and storage actually match what Apple published. Apple renames colours between generations — "Cam Vũ Trụ" exists on iPhone 17 Pro but not on iPhone 16, for example. If it prints `NO MATCH`, it also prints the real names, so you can paste the correct one into `config.yaml` and still sprint on time. `ALL CLEAR` means go.
 
-It prints both names per colour, `dimensionColordarkcherry='Đỏ Anh Đào'`. Paste the **English** half into `colors` — it is the half that does not change wording on you.
+It prints both names per colour, `dimensionColorburgundy='Đỏ Burgundy'`. Paste the **English** half into `colors` — it is the half that does not change wording on you.
 
 If it says `not a live configure page`, the page is not published yet. Wait and run it again — that is the same thing the real run would see.
 

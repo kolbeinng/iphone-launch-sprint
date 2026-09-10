@@ -1062,6 +1062,8 @@ def _hub_link_forbidden_reason(link: dict, *, year: str) -> str | None:
         return "iPhone 16"
     if "fold" in hay:
         return "Fold"
+    if re.search(r"iphone[- ]?duo\b", hay) or "iphone-duo" in href:
+        return "Duo"
     if re.search(r"iphone[- ]?air\b", hay):
         return "Air"
     return None
@@ -1148,6 +1150,10 @@ def assert_family_is_order_target(page, target: dict) -> None:
         if "fold" in url or re.search(r"\bfold\b", blob):
             raise RuntimeError(
                 "REFUSE: Fold page. Fold is not the VN order target."
+            )
+        if "iphone-duo" in url or re.search(r"iphone[- ]?duo\b", blob):
+            raise RuntimeError(
+                "REFUSE: iPhone Duo page. Duo is not the VN order target."
             )
         if re.search(r"iphone[- ]?air\b", url) or re.search(r"iphone air\b", blob):
             raise RuntimeError("REFUSE: iPhone Air page. Target is 18 Pro Max.")

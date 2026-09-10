@@ -5,7 +5,7 @@ A practice script for buying an iPhone on **apple.com/vn**.
 It fills the whole checkout for you and then **stops at the Đặt hàng button**. It never clicks it. You do. `dry_run: true` is required and the script refuses to start without it.
 
 - **Practice now:** iPhone 17 Pro Max · 256GB · Cam Vũ Trụ
-- **Launch night:** iPhone 18 Pro Max — one line in `config.yaml`
+- **Launch night:** iPhone 18 Pro Max · 256GB · Burgundy — one line in `config.yaml` (`mode: launch`)
 
 A full run takes about a minute. Roughly one second of that is our clicking; the rest is Apple's pages loading.
 
@@ -391,8 +391,8 @@ VERDICT: config would sprint clean
 That is what you want to see. If instead it says:
 
 ```
-prefs: NO MATCH for COLOR — tried ['cherry', 're:cherry|burgundy|wine']
-       available: [dimensionColorultramarine='Xanh Lưu Ly', dimensionColorpink='Hồng']
+prefs: NO MATCH for COLOR — tried ['burgundy', 're:burgundy|đỏ']
+       available: [dimensionColorglacier='Xanh Glacier', dimensionColorsilver='Bạc']
 ```
 
 then copy one of the names it lists under `available` into the `colors` list in `config.yaml` and run it again until it says `ALL CLEAR`.
