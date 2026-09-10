@@ -91,11 +91,19 @@ git clone https://github.com/kolbeinng/iphone-launch-sprint.git
 cd iphone-launch-sprint
 ```
 
-Both `git` and `python3` must print a version number. If either says "command not found", step 1 has not finished — wait for it and try again.
+Both `git` and `python3` must print a version number, and you must see them **before** you run the clone. On a brand-new Mac, `git --version` pops up a dialog offering to install Apple's developer tools instead of printing anything. Click **Install**, wait for it to finish, then run `git --version` again. Until it prints a version, `git clone` cannot work.
 
-A browser window will open asking you to sign in to GitHub. Sign in as yourself. If you get **404**, you do not have access to the repo yet — ask the owner to add you.
+The repo is public, so nothing will ask you to sign in to GitHub. If you are prompted for a username or password, the address has been typed wrong — copy the `git clone` line again.
 
 **Use the `git clone` above, not the green Code → Download ZIP button.** The ZIP unpacks to a folder called `iphone-launch-sprint-main`, because GitHub adds the branch name to it, so every `cd iphone-launch-sprint` in this guide would fail. It also is not a git checkout, so you cannot pull fixes later. If you already took the ZIP, rename the folder to `iphone-launch-sprint` and the rest of the guide works.
+
+**Before moving on, check the folder is really there:**
+
+```bash
+cd ~/Projects/iphone-launch-sprint && pwd
+```
+
+It must print `/Users/<your-name>/Projects/iphone-launch-sprint`. If it says `no such file or directory`, the clone did not happen — scroll up for the error from `git clone` and fix that before step 3. Do not paste step 3 until this works, because those commands would otherwise build the venv in the wrong folder.
 
 ### Step 3 — Install the Python packages
 
