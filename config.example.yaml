@@ -66,6 +66,9 @@ launch:
   product_prefs:
     # Live VN page 10 Sept: dimensionColorburgundy='Đỏ Burgundy',
     # glacier='Băng Thanh', silver='Bạc', black='Đen'.
+    #colors:
+    #  - "glacier"
+    #  - 're:glacier|băng'
     colors:
       - "burgundy"
       - 're:burgundy|đỏ'
