@@ -132,6 +132,10 @@ class StageTimer:
         log("=" * 48)
 
 
+class CheckoutBlocked(RuntimeError):
+    """Hop cannot succeed — Apple opened a blocking form (e.g. billing address)."""
+
+
 def _wait_js_heartbeat(
     page,
     js: str,
@@ -141,6 +145,7 @@ def _wait_js_heartbeat(
     beat_ms: int = 1000,
     arg=None,
     snapshot_js: str | None = None,
+    abort_js: str | None = None,
 ) -> float:
     """
     Poll a JS predicate with a 1s heartbeat.
@@ -148,6 +153,9 @@ def _wait_js_heartbeat(
     Apple checkout hops (Fulfillment→Shipping, etc.) sit on the same page for
     ~10s while graviton answers. A silent wait_for_function looks like a hang;
     this logs elapsed + _s= so you see immediately that *we* are idle on Apple.
+
+    abort_js: if this becomes true *before* the success predicate, raise
+    CheckoutBlocked immediately instead of burning the remaining timeout.
     """
     t0 = time.perf_counter()
     deadline = t0 + timeout_ms / 1000.0
@@ -162,6 +170,17 @@ def _wait_js_heartbeat(
             ms = (time.perf_counter() - t0) * 1000
             log(f"WAIT  {label} READY: {ms:.0f}ms")
             return ms
+        if abort_js:
+            try:
+                blocked = bool(page.evaluate(abort_js))
+            except Exception:  # noqa: BLE001
+                blocked = False
+            if blocked:
+                ms = (time.perf_counter() - t0) * 1000
+                log(f"WAIT  {label} BLOCKED: {ms:.0f}ms (billing address prompt)")
+                raise CheckoutBlocked(
+                    f"{label} blocked by billing address prompt after {ms:.0f}ms"
+                )
         now = time.perf_counter()
         elapsed = (now - t0) * 1000
         if elapsed - last_beat >= beat_ms:
@@ -189,11 +208,18 @@ _SNAP_CHECKOUT = """() => {
   );
   const dist = document.querySelector('select[data-autom="form-field-district"]');
   const distN = dist ? dist.options.length : 0;
+  const vis = (el) => {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 2 && r.height > 2;
+  };
+  const save = vis(document.querySelector('[data-autom="address-savebutton"]'));
   return '_s=' + s
     + ' newAddr=' + (newAddr ? 'Y' : 'N')
     + ' card=' + (savedCard ? 'Y' : 'N')
     + ' cvv=' + (cvv ? 'Y' : 'N')
     + ' place=' + (place ? 'Y' : 'N')
+    + ' save=' + (save ? 'Y' : 'N')
     + ' phuongOpts=' + distN;
 }"""
 
@@ -2639,64 +2665,112 @@ def _billing_popup(page):
     )
     if dlg.count() > 0:
         return dlg.first
-    return page.locator(".rc-overlay-popup").filter(
+    overlay = page.locator(".rc-overlay-popup").filter(
         has=page.locator('[data-autom="address-savebutton"]')
-    ).first
+    )
+    if overlay.count() > 0:
+        return overlay.first
+    save = page.locator('[data-autom="address-savebutton"]')
+    if save.count() > 0:
+        return page.locator("body")
+    return page.locator("body")
+
+
+# True when Apple is already asking for a billing address (popup, heading,
+# visible empty street, Lưu, or required-field errors). Must stay false on a
+# machine that already has a card address and goes straight to Đặt hàng.
+_BILLING_PROMPT_JS = """() => {
+  const vis = (el) => {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return false;
+    return !!(el.offsetParent || el.getClientRects().length);
+  };
+  const href = location.href || '';
+  const step = ((href.match(/[?&]_s=([^&]+)/) || [])[1] || '');
+  if (/Shipping/i.test(href) || /Shipping/i.test(step)) return false;
+
+  const heading = Array.from(
+    document.querySelectorAll('h1, h2, h3, [role="heading"], legend')
+  ).some((h) => vis(h) && /chỉnh\\s*sửa\\s*địa\\s*chỉ|edit\\s+address/i.test(
+    h.innerText || ''
+  ));
+  if (heading) return true;
+
+  const save = Array.from(
+    document.querySelectorAll('[data-autom="address-savebutton"]')
+  ).some(vis);
+  if (save) return true;
+
+  const dlg = document.querySelector(
+    '[role="dialog"][aria-modal="true"], .rc-overlay-popup'
+  );
+  if (dlg && vis(dlg) && dlg.querySelector(
+    '[data-autom="address-savebutton"], input[data-autom="form-field-street"], '
+    + 'select[id*="editSavedBillingAddress"]'
+  )) {
+    return true;
+  }
+
+  const onBilling = /Billing/i.test(href) || /Billing/i.test(step);
+  if (!onBilling) return false;
+
+  const emptyStreet = Array.from(
+    document.querySelectorAll('input[data-autom="form-field-street"]')
+  ).some((el) => vis(el) && !(el.value || '').trim());
+  if (emptyStreet) return true;
+
+  return Array.from(document.querySelectorAll(
+    '[class*="error"], .form-message-error, [aria-invalid="true"], .form-message'
+  )).some((e) => vis(e) && /vui lòng điền|trường bắt buộc|mục này không hợp lệ|địa chỉ|address/i.test(
+    (e.innerText || '').slice(0, 240)
+  ));
+}"""
 
 
 def _billing_inline_form_visible(page) -> bool:
-    """True only when Apple is actually asking for a billing address on-page.
-
-    Must NOT fire on a machine that already has a card address and goes
-    straight to Đặt hàng. Hidden leftover inputs do not count — the street
-    field has to be visible and empty, or a Lưu / error prompt has to show.
-    """
-    try:
-        return bool(
-            page.evaluate(
-                """() => {
-                  const href = location.href || '';
-                  const step = ((href.match(/[?&]_s=([^&]+)/) || [])[1] || '');
-                  if (/Shipping/i.test(href) || /Shipping/i.test(step)) return false;
-                  if (!(/Billing/i.test(href) || /Billing/i.test(step))) return false;
-                  const vis = (el) => !!(el && (el.offsetParent || el.getClientRects().length));
-                  const street = document.querySelector('input[data-autom="form-field-street"]');
-                  const save = document.querySelector('[data-autom="address-savebutton"]');
-                  const emptyStreet = vis(street) && !(street.value || '').trim();
-                  const askingSave = vis(save);
-                  const err = Array.from(document.querySelectorAll(
-                    '[class*="error"], .form-message-error, [aria-invalid="true"]'
-                  )).some((e) => vis(e) && /địa chỉ|address|billing|thanh toán/i.test(
-                    e.innerText || ''
-                  ));
-                  return emptyStreet || askingSave || err;
-                }"""
-            )
-        )
-    except Exception:  # noqa: BLE001
-        return False
+    """True only when Apple is actually asking for a billing address on-page."""
+    return _billing_prompt_visible(page) and not _billing_address_editor_open(page)
 
 
 def _billing_prompt_visible(page) -> bool:
     """True only if Apple is already showing a billing address UI to fill."""
-    return _billing_address_editor_open(page) or _billing_inline_form_visible(page)
+    try:
+        return bool(page.evaluate(_BILLING_PROMPT_JS))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _billing_address_editor_open(page) -> bool:
-    """True when the Chỉnh Sửa Địa Chỉ popup is visible."""
+    """True when the Chỉnh Sửa Địa Chỉ popup / editor UI is visible."""
     try:
         return bool(
             page.evaluate(
                 """() => {
+                  const vis = (el) => {
+                    if (!el) return false;
+                    const r = el.getBoundingClientRect();
+                    if (r.width < 2 || r.height < 2) return false;
+                    return !!(el.offsetParent || el.getClientRects().length);
+                  };
+                  const heading = Array.from(
+                    document.querySelectorAll('h1, h2, h3, [role="heading"]')
+                  ).some((h) => vis(h) && /chỉnh\\s*sửa\\s*địa\\s*chỉ|edit\\s+address/i.test(
+                    h.innerText || ''
+                  ));
+                  if (heading) return true;
+                  const save = Array.from(
+                    document.querySelectorAll('[data-autom="address-savebutton"]')
+                  ).some(vis);
+                  if (save) return true;
                   const dlg = document.querySelector(
                     '[role="dialog"][aria-modal="true"], .rc-overlay-popup'
                   );
-                  if (!dlg) return false;
-                  const vis = !!(dlg.offsetParent || dlg.getClientRects().length);
-                  if (!vis) return false;
+                  if (!dlg || !vis(dlg)) return false;
                   return !!dlg.querySelector(
                     '[data-autom="address-savebutton"], '
-                    + 'select[id*="editSavedBillingAddress"]'
+                    + 'select[id*="editSavedBillingAddress"], '
+                    + 'input[data-autom="form-field-street"]'
                   );
                 }"""
             )
@@ -3109,11 +3183,17 @@ def _sync_billing_address_from_checkout(
         return
     if popup_open:
         popup = _billing_popup(page)
-        popup.wait_for(state="visible", timeout=12_000)
-        page.locator(
-            'select[id*="editSavedBillingAddress"][data-autom="form-field-state"], '
-            '[role="dialog"] select[data-autom="form-field-state"]'
-        ).first.wait_for(state="attached", timeout=12_000)
+        try:
+            popup.wait_for(state="visible", timeout=4_000)
+        except Exception:  # noqa: BLE001
+            popup = page
+        try:
+            popup.locator(
+                'select[data-autom="form-field-state"], '
+                'input[data-autom="form-field-street"]'
+            ).first.wait_for(state="visible", timeout=4_000)
+        except Exception:  # noqa: BLE001
+            pass
         log("FILL  billing popup — same method as shipping (native/by_label)")
     else:
         popup = page
@@ -3204,8 +3284,44 @@ def _sync_billing_address_from_checkout(
             t_d = time.perf_counter()
             cur_d = _select_current_label(page, "form-field-district")
             if district.lower() not in (cur_d or "").lower():
-                if not _select_option_by_label(
-                    page, "form-field-district", district, wait_sec=12.0
+                try:
+                    _wait_js_heartbeat(
+                        page,
+                        """(want) => {
+                          const vis = (el) => {
+                            if (!el) return false;
+                            const r = el.getBoundingClientRect();
+                            return r.width > 2 && r.height > 2;
+                          };
+                          const dlg = document.querySelector(
+                            '[role="dialog"][aria-modal="true"], .rc-overlay-popup'
+                          );
+                          const root = (dlg && vis(dlg)) ? dlg : document;
+                          const sels = Array.from(root.querySelectorAll(
+                            'select[data-autom="form-field-district"]'
+                          ));
+                          const sel = sels.find(vis) || sels[sels.length - 1];
+                          if (!sel || sel.disabled) return false;
+                          const w = String(want || '').toLowerCase();
+                          return Array.from(sel.options).some((o) => {
+                            const t = (o.textContent || '').trim().toLowerCase();
+                            return t && (t === w || t.includes(w));
+                          });
+                        }""",
+                        arg=district,
+                        label="billing phường options after quận",
+                        timeout_ms=8_000,
+                        snapshot_js=_SNAP_CHECKOUT,
+                    )
+                except Exception as wait_exc:  # noqa: BLE001
+                    log(f"WAIT  billing phường options: {wait_exc}")
+                picked = False
+                if popup_open:
+                    picked = _select_billing_cascade(
+                        page, "form-field-district", district, wait_sec=4.0
+                    )
+                if not picked and not _select_option_by_label(
+                    page, "form-field-district", district, wait_sec=4.0
                 ):
                     if not _select_option_native(
                         page, "form-field-district", district, wait_sec=4.0
@@ -3442,9 +3558,27 @@ def _click_review_and_stop_at_place_order(
                 label=f"Apple hop Review→Đặt hàng (attempt {attempt + 1})",
                 timeout_ms=25_000 if attempt == 0 else 15_000,
                 snapshot_js=_SNAP_CHECKOUT,
+                abort_js=_BILLING_PROMPT_JS,
             )
             review_ok = True
             break
+        except CheckoutBlocked as blocked:
+            errs = page.evaluate(
+                """() => Array.from(document.querySelectorAll(
+                  '[class*="error"], [aria-invalid="true"], .form-message-error, [role="alert"]'
+                )).map((e) => (e.innerText || '').replace(/\\s+/g,' ').trim())
+                  .filter(Boolean).slice(0, 8)"""
+            )
+            log(
+                f"WAIT  review blocked by billing prompt "
+                f"(attempt {attempt + 1}, _s={_checkout_step(page)}): {blocked}"
+                + (f" errors={errs!r}" if errs else "")
+            )
+            raise RuntimeError(
+                "Did not reach place-order page after review "
+                f"(url={page.url}, _s={_checkout_step(page)}, billing address prompt)"
+                + (f" errors={errs!r}" if errs else "")
+            ) from blocked
         except Exception as hop_exc:  # noqa: BLE001
             errs = page.evaluate(
                 """() => Array.from(document.querySelectorAll(
@@ -5044,24 +5178,24 @@ def advance_checkout_to_payment(
             or "error" in msg
         ):
             log(
-                f"Review blocked — waiting to see if Apple opens a billing "
-                f"address prompt: {exc}"
+                f"Review blocked — filling billing address now: {exc}"
             )
-            appeared = False
-            deadline = time.perf_counter() + 8.0
-            while time.perf_counter() < deadline:
-                if _billing_prompt_visible(page):
-                    appeared = True
-                    break
-                page.wait_for_timeout(200)
-            if not appeared:
-                log(
-                    "Review error but no billing prompt — "
-                    "not clicking Chỉnh sửa; leaving the card address alone"
-                )
-                raise
+            if not _billing_prompt_visible(page):
+                appeared = False
+                deadline = time.perf_counter() + 3.0
+                while time.perf_counter() < deadline:
+                    if _billing_prompt_visible(page):
+                        appeared = True
+                        break
+                    page.wait_for_timeout(100)
+                if not appeared:
+                    log(
+                        "Review error but no billing prompt — "
+                        "not clicking Chỉnh sửa; leaving the card address alone"
+                    )
+                    raise
             _sync_billing_address_from_checkout(page, bill_addr, timer=timer)
-            _fill_cvv(page, cvv, timer=timer)
+            _fill_cvv(page, cvv, timer=timer, mount_timeout_ms=1_500)
             _click_review_and_stop_at_place_order(page, timer=timer)
         else:
             raise
