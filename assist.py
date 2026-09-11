@@ -2374,8 +2374,87 @@ def _checkout_quantity(checkout_cfg: dict | None) -> int:
     return qty
 
 
+def _bag_qty_css(found: dict) -> str:
+    if found.get("id"):
+        return f'select[id="{found["id"]}"]'
+    if found.get("autom"):
+        return f'select[data-autom="{found["autom"]}"]'
+    return 'select[name="quantity"]'
+
+
+def _bag_qty_live(page, css: str) -> dict:
+    """Dropdown value + whether Apple is still saving the bag."""
+    try:
+        snap = page.evaluate(
+            """(css) => {
+              const el = document.querySelector(css);
+              const btn = document.querySelector('[data-autom="checkout"]');
+              const updating = !!document.querySelector(
+                '[class*="bag-updating"], [class*="is-updating"], '
+                + '.rs-bag-updating, [data-autom*="bag-updating"]'
+              );
+              const busyBtn = !!(
+                btn
+                && (btn.disabled
+                    || btn.getAttribute('aria-disabled') === 'true'
+                    || btn.getAttribute('aria-busy') === 'true')
+              );
+              return {
+                value: el ? String(el.value || '') : '',
+                ready: !!(el && btn && !busyBtn && !updating),
+                updating: updating || busyBtn,
+              };
+            }""",
+            css,
+        )
+        return snap if isinstance(snap, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _wait_bag_quantity_committed(
+    page, css: str, want: int, *, timeout_sec: float = 8.0
+) -> None:
+    """Do not click Thanh Toán until Apple has kept the new qty (not just the dropdown)."""
+    loc = page.locator(css).first
+    t_start = time.time()
+    deadline = t_start + timeout_sec
+    saw_updating = False
+    last = {}
+    while time.time() < deadline:
+        last = _bag_qty_live(page, css)
+        if last.get("updating"):
+            saw_updating = True
+        if last.get("value") != str(want):
+            try:
+                loc.select_option(value=str(want), timeout=1_200)
+            except Exception:  # noqa: BLE001
+                pass
+            page.wait_for_timeout(80)
+            continue
+        # Value stuck at `want`. If Apple flashed a spinner, wait until it clears.
+        # If it never did, hold ~700ms so the cart POST can finish (slow Macs).
+        if last.get("ready") and (saw_updating or (time.time() - t_start) >= 0.7):
+            held = time.time()
+            while time.time() - held < 0.25:
+                confirm = _bag_qty_live(page, css)
+                if confirm.get("value") != str(want) or not confirm.get("ready"):
+                    break
+                page.wait_for_timeout(50)
+            else:
+                log(
+                    f"Bag quantity committed at {want} "
+                    f"(updating={'Y' if saw_updating else 'N'})"
+                )
+                return
+        page.wait_for_timeout(80)
+    raise RuntimeError(
+        f"Bag quantity did not stay at {want} before Thanh Toán (last={last!r})"
+    )
+
+
 def set_bag_quantity(page, quantity: int, *, timer: StageTimer | None = None) -> None:
-    """Set bag line-item qty before Thanh Toán. Default 1 is already selected — no-op."""
+    """Set bag line-item qty and wait until Apple saves it, then caller may checkout."""
     want = int(quantity)
     t0 = time.perf_counter()
     page.locator('[data-autom="checkout"]').first.wait_for(
@@ -2404,42 +2483,28 @@ def set_bag_quantity(page, quantity: int, *, timer: StageTimer | None = None) ->
         f"Bag quantity now={current} want={want} options={options} "
         f"via={autom}"
     )
-    if current == str(want):
-        ms = (time.perf_counter() - t0) * 1000
-        log(f"Bag quantity already {want} ({ms:.0f}ms)")
-        if timer:
-            timer.record("8 bag quantity", ms, kind="click")
-        return
     if str(want) not in options:
         raise RuntimeError(
             f"checkout.quantity={want} is not in Apple's bag dropdown {options}. "
             "iPhone is often capped at 2."
         )
-    if found.get("id"):
-        css = f'select[id="{found["id"]}"]'
-    elif found.get("autom"):
-        css = f'select[data-autom="{found["autom"]}"]'
-    else:
-        css = 'select[name="quantity"]'
-    loc = page.locator(css).first
-    loc.select_option(value=str(want), timeout=3_000)
-    page.wait_for_function(
-        """({ css, want }) => {
-          const el = document.querySelector(css);
-          if (!el || String(el.value) !== String(want)) return false;
-          const btn = document.querySelector('[data-autom="checkout"]');
-          return !!(btn && !btn.disabled);
-        }""",
-        arg={"css": css, "want": str(want)},
-        timeout=10_000,
-    )
+    css = _bag_qty_css(found)
+    if current != str(want):
+        page.locator(css).first.select_option(value=str(want), timeout=3_000)
+        log(f"FILL  bag quantity dropdown → {want}")
+    _wait_bag_quantity_committed(page, css, want)
     ms = (time.perf_counter() - t0) * 1000
-    log(f"FILL  bag quantity → {want}: {ms:.0f}ms")
+    log(f"Bag quantity ready {want} ({ms:.0f}ms) — Thanh Toán is safe")
     if timer:
         timer.record("8 bag quantity", ms, kind="click")
 
 
-def click_thanh_toan_now(page, timer: StageTimer | None = None) -> None:
+def click_thanh_toan_now(
+    page,
+    timer: StageTimer | None = None,
+    *,
+    quantity: int | None = None,
+) -> None:
     """From bag, enter checkout form. Never place the order."""
     timer = timer or StageTimer()
     t_ready = time.perf_counter()
@@ -2450,6 +2515,14 @@ def click_thanh_toan_now(page, timer: StageTimer | None = None) -> None:
         f"{(time.perf_counter() - t_ready) * 1000:.0f}ms"
     )
     for attempt in range(3):
+        if quantity is not None and int(quantity) > 1:
+            live = _bag_quantity_select_info(page).get("found") or {}
+            if str(live.get("value") or "") != str(int(quantity)):
+                log(
+                    f"Thanh Toán blocked — qty still {live.get('value')!r}, "
+                    f"want {quantity}. Re-setting first."
+                )
+                set_bag_quantity(page, int(quantity), timer=timer)
         t_click = time.perf_counter()
         page.evaluate(
             """() => {
@@ -2482,6 +2555,17 @@ def click_thanh_toan_now(page, timer: StageTimer | None = None) -> None:
             page.locator('[data-autom="checkout"]').first.wait_for(
                 state="attached", timeout=8_000
             )
+            continue
+        # Qty change not saved yet: Apple cancels checkout and dumps us on /bag.
+        if "/shop/bag" in (page.url or "").lower() and attempt < 2:
+            log(
+                "Thanh Toán bounced back to the bag "
+                "(quantity likely not saved) — wait and retry"
+            )
+            if quantity is not None:
+                set_bag_quantity(page, int(quantity), timer=timer)
+            else:
+                page.wait_for_timeout(700)
             continue
         break
     timer.mark("10 checkout-ready page", kind="wait")
@@ -4837,8 +4921,9 @@ def click_next_steps(
     click_xem_gio_hang_now(page, timer)
 
     if "/shop/bag" in page.url.lower() or "checkout" not in page.url.lower():
-        set_bag_quantity(page, _checkout_quantity(checkout_cfg), timer=timer)
-        click_thanh_toan_now(page, timer)
+        qty = _checkout_quantity(checkout_cfg)
+        set_bag_quantity(page, qty, timer=timer)
+        click_thanh_toan_now(page, timer, quantity=qty)
 
     advance_checkout_to_payment(
         page,
