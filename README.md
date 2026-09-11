@@ -165,7 +165,7 @@ python3 assist.py --warm-only
 python3 assist.py --at-launch
 ```
 
-Bạn sẽ thấy đếm ngược, kiểu `T-0: 8.4 min left`, rồi `T-0 — GO`. Đi chỗ khác cũng được. Đừng đóng Chrome. Đừng tắt Terminal. Đừng cố canh giờ.
+Bạn sẽ thấy đếm ngược, kiểu `T-0: 8.4 min left`, rồi `T-0 — GO`. Ở gần máy. Đừng đóng Chrome. Đừng tắt Terminal. Đừng cố canh giờ. Nếu nó kêu hoặc nhờ bạn bấm màu / dung lượng, bấm trong Chrome.
 
 Khi tới Đặt hàng thì nó dừng và kêu. **Bạn** bấm Đặt hàng. Script không bao giờ bấm.
 
@@ -288,7 +288,7 @@ python assist.py --warm-only
 python assist.py --at-launch
 ```
 
-Bạn sẽ thấy đếm ngược, kiểu `T-0: 8.4 min left`, rồi `T-0 — GO`. Đi chỗ khác cũng được. Đừng đóng Chrome. Đừng đóng PowerShell. Đừng cố canh giờ.
+Bạn sẽ thấy đếm ngược, kiểu `T-0: 8.4 min left`, rồi `T-0 — GO`. Ở gần máy. Đừng đóng Chrome. Đừng đóng PowerShell. Đừng cố canh giờ. Nếu nó kêu hoặc nhờ bạn bấm màu / dung lượng, bấm trong Chrome.
 
 Khi tới Đặt hàng thì nó dừng và kêu. **Bạn** bấm Đặt hàng. Script không bao giờ bấm.
 
@@ -479,7 +479,7 @@ python3 assist.py --warm-only
 python3 assist.py --at-launch
 ```
 
-You will see a countdown, like `T-0: 8.4 min left`, then `T-0 — GO`. Walk away. Do not close Chrome. Do not quit Terminal. Do not try to time it.
+You will see a countdown, like `T-0: 8.4 min left`, then `T-0 — GO`. Stay nearby. Do not close Chrome. Do not quit Terminal. Do not try to time it. If it beeps or asks you to click a colour or storage, click it in Chrome.
 
 When it reaches Đặt hàng it stops and beeps. **You** click Đặt hàng. The script never clicks it.
 
@@ -602,7 +602,7 @@ python assist.py --warm-only
 python assist.py --at-launch
 ```
 
-You will see a countdown, like `T-0: 8.4 min left`, then `T-0 — GO`. Walk away. Do not close Chrome. Do not close PowerShell. Do not try to time it.
+You will see a countdown, like `T-0: 8.4 min left`, then `T-0 — GO`. Stay nearby. Do not close Chrome. Do not close PowerShell. Do not try to time it. If it beeps or asks you to click a colour or storage, click it in Chrome.
 
 When it reaches Đặt hàng it stops and beeps. **You** click Đặt hàng. The script never clicks it.
 
