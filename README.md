@@ -1,5 +1,319 @@
 # iPhone Launch Sprint
 
+[English version below.](#english)
+
+Script luyện tập để mua iPhone trên **apple.com/vn**.
+
+Nó điền hết phần thanh toán rồi **dừng ở nút Đặt hàng**. Nó không bao giờ bấm nút đó. Bạn bấm. Phải để `dry_run: true`, không thì script không chạy.
+
+- **Luyện tập ngay:** iPhone 17 Pro Max · 256GB · Cam Vũ Trụ
+- **Đêm mở bán:** iPhone 18 Pro Max · 256GB · Burgundy — đổi một dòng trong `config.yaml` (`mode: launch`)
+
+Một lần chạy khoảng một phút. Chỉ khoảng một giây là mình bấm; phần còn lại là Apple đang tải trang.
+
+---
+
+## Trước khi bắt đầu
+
+Bạn cần ba thứ này. Lấy sẵn bây giờ, đừng đợi đêm mở bán.
+
+1. **Tài khoản Apple** đã lưu thẻ và địa chỉ giao hàng, và **địa chỉ thanh toán của thẻ phải là Việt Nam**.
+2. **Điện thoại của bạn**, để nhận mã 2FA của Apple.
+3. **Mã CVV của thẻ** (3 số). Bạn gõ trên máy của mình. Nó không lên GitHub.
+
+Chọn máy của bạn:
+
+- **[Mac](#cài-đặt-trên-mac)** — lệnh bắt đầu bằng `python3`
+- **[Windows 11](#cài-đặt-trên-windows-11)** — lệnh bắt đầu bằng `python`
+
+Đừng lẫn. Mac không có lệnh `python`; Windows không có lệnh `python3`.
+
+---
+
+# Cài đặt trên Mac
+
+Mở **Terminal** (bấm ⌘ Space, gõ `Terminal`, bấm Return).
+
+Copy từng bước, dán vào Terminal, bấm Return. Làm theo thứ tự.
+
+### Bước 1 — Cài Chrome và công cụ lập trình của Apple
+
+```bash
+if [ -d "/Applications/Google Chrome.app" ]; then
+  echo "Chrome: already installed - skipping"
+else
+  echo "Chrome: downloading, about 200 MB, this takes a minute or two..."
+  curl -# -fSL -o /tmp/chrome.dmg "https://dl.google.com/chrome/mac/universal/stable/GGRO/googlechrome.dmg"
+  echo "Chrome: installing..."
+  yes | hdiutil attach -nobrowse -noverify /tmp/chrome.dmg
+  cp -R "/Volumes/Google Chrome/Google Chrome.app" /Applications/
+  hdiutil detach "/Volumes/Google Chrome"
+  rm -f /tmp/chrome.dmg
+  echo "Chrome: installed"
+fi
+
+if xcode-select -p >/dev/null 2>&1; then
+  echo "Developer tools: already installed - skipping"
+else
+  echo "Developer tools: asking macOS to install - click Install in the popup"
+  xcode-select --install
+fi
+```
+
+Cái này cài Google Chrome và nhờ macOS cài công cụ lập trình (đó là chỗ ra lệnh `git`). Dòng `already installed - skipping` là thành công — phần đó đã có sẵn.
+
+**Nếu hiện cửa sổ "Install the command line developer tools?"** — bấm **Install**, đồng ý, rồi đợi xong. Có thể mất 5 đến 15 phút.
+
+Xong rồi thì **đóng Terminal, mở cái mới**, rồi làm bước 2.
+
+### Bước 2 — Kiểm tra công cụ, rồi tải project
+
+```bash
+git --version
+python3 --version
+mkdir -p ~/Projects
+cd ~/Projects
+git clone https://github.com/kolbeinng/iphone-launch-sprint.git
+cd iphone-launch-sprint
+```
+
+Cả `git` và `python3` phải in ra số phiên bản. Máy Mac mới, `git --version` đôi khi hiện hộp thoại thay vì in chữ. Bấm **Install**, đợi, rồi chạy `git --version` lại. Chưa in phiên bản thì `git clone` không chạy được.
+
+Repo này là public nên sẽ không hỏi đăng nhập GitHub. Nếu nó hỏi tên hoặc mật khẩu, là bạn gõ sai địa chỉ — copy lại dòng `git clone`.
+
+**Dùng `git clone` ở trên, đừng bấm nút xanh Code → Download ZIP.** File ZIP bung ra thư mục tên `iphone-launch-sprint-main`, nên mọi lệnh `cd iphone-launch-sprint` trong hướng dẫn này sẽ lỗi. Nếu bạn đã tải ZIP, đổi tên thư mục thành `iphone-launch-sprint` là các bước sau vẫn dùng được.
+
+### Bước 3 — Cài các gói Python
+
+```bash
+cd ~/Projects/iphone-launch-sprint
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --upgrade pip
+python3 -m pip install -r requirements.txt
+python3 -c "from playwright.sync_api import sync_playwright; print('all good')"
+```
+
+Hai thứ phải đúng trước khi làm tiếp:
+
+- Đầu dòng Terminal hiện **`(.venv)`**
+- Lệnh cuối in **`all good`**
+
+### Bước 4 — Tạo file config
+
+```bash
+cp config.example.yaml config.yaml
+open -e config.yaml
+```
+
+TextEdit mở ra. Điền **`cvv`** (3 số trên thẻ), rồi bấm ⌘S để lưu và đóng cửa sổ.
+
+Các thứ khác để yên. Tên, địa chỉ, email và số điện thoại đã có trong file. Để nguyên `mode: test` và `dry_run: true`.
+
+### Bước 5 — Đăng nhập Apple
+
+```bash
+python3 assist.py --warm-only
+```
+
+Một cửa sổ Chrome mở ra. **Đăng nhập Apple trong cửa sổ đó** và nhập mã 2FA trên điện thoại. Script đang đợi bạn — không phải bị treo.
+
+Sau đó nó thêm một iPhone thử, vào thanh toán, rồi **xóa túi** lại. Bình thường; chỉ để làm ấm phiên đăng nhập.
+
+**Để cửa sổ Chrome đó mở. Đừng tắt.** Tắt là phải đăng nhập và 2FA lại từ đầu.
+
+### Bước 6 — Chạy thử
+
+```bash
+python3 assist.py --now
+```
+
+Xem nó chọn máy, từ chối đổi cũ lấy mới và AppleCare, rồi đi hết thanh toán. Nó dừng ở **Đặt hàng** và không bấm.
+
+Chạy vài lần đến khi chán. Đó mới là mục tiêu.
+
+### Mở Terminal lần sau
+
+Mỗi cửa sổ Terminal mới cần hai dòng này trước:
+
+```bash
+cd ~/Projects/iphone-launch-sprint
+source .venv/bin/activate
+```
+
+Đợi `(.venv)`, rồi mới chạy lệnh tiếp.
+
+### Bước 7 — Đêm mở bán
+
+Thứ Bảy **12 tháng 9 năm 2026 lúc 19:00** giờ Việt Nam. Đừng tự bấm Return đúng 19:00. Bạn khởi động sớm, script sẽ đợi.
+
+**Gợi ý:** ngồi vào lúc **18:45**. Cắm sạc laptop. Điện thoại trong tay. Tắt Không làm phiền. Cùng máy bạn đã luyện tập.
+
+1. Mở `config.yaml` và đổi **một chữ**: `mode: test` → `mode: launch`. Lưu.
+2. Mở Terminal, dán hai dòng ở **Mở Terminal lần sau**. Đợi `(.venv)`.
+3. Làm ấm đăng nhập. Đăng nhập và làm 2FA nếu Apple hỏi. **Để Chrome mở.**
+
+```bash
+python3 assist.py --warm-only
+```
+
+4. Trong **cùng** cửa sổ Terminal, bắt đầu đợi:
+
+```bash
+python3 assist.py --at-launch
+```
+
+Bạn sẽ thấy đếm ngược, kiểu `T-0: 8.4 min left`, rồi `T-0 — GO`. Đi chỗ khác cũng được. Đừng đóng Chrome. Đừng tắt Terminal. Đừng cố canh giờ.
+
+Khi tới Đặt hàng thì nó dừng và kêu. **Bạn** bấm Đặt hàng. Script không bao giờ bấm.
+
+Bạn có thể chạy `--at-launch` sớm năm, mười hoặc ba mươi phút. Đợi không mất gì. Lỡ thì mất máy. Nếu đã quá 19:00, nó in `launch_at already past — sprinting NOW` rồi chạy ngay.
+
+---
+
+# Cài đặt trên Windows 11
+
+Bấm **Start**, gõ `PowerShell`, mở **Windows PowerShell**.
+
+Copy từng bước, dán, bấm Enter. Làm theo thứ tự. Windows hỏi quyền thì bấm **Yes**.
+
+### Bước 1 — Cài Chrome, Git và Python
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force
+winget install --id Google.Chrome -e --accept-package-agreements --accept-source-agreements
+winget install --id Git.Git -e --accept-package-agreements --accept-source-agreements
+winget install --id Python.Python.3.12 -e --accept-package-agreements --accept-source-agreements
+```
+
+Mất vài phút. Xong thì **đóng PowerShell, mở cái mới.** Chương trình mới chỉ hiện trong cửa sổ mới.
+
+### Bước 2 — Kiểm tra công cụ, rồi tải project
+
+```powershell
+git --version
+py -3 --version
+cd $env:USERPROFILE
+mkdir Projects -ErrorAction SilentlyContinue
+cd Projects
+git clone https://github.com/kolbeinng/iphone-launch-sprint.git
+cd iphone-launch-sprint
+```
+
+Cả hai phải in số phiên bản. Không thì bạn còn đang ở cửa sổ PowerShell cũ — mở cái mới.
+
+Repo này là public nên sẽ không hỏi đăng nhập GitHub. Nếu nó hỏi tên hoặc mật khẩu, là bạn gõ sai địa chỉ — copy lại dòng `git clone`.
+
+**Dùng `git clone` ở trên, đừng bấm nút xanh Code → Download ZIP.** File ZIP bung ra thư mục tên `iphone-launch-sprint-main`, nên mọi lệnh `cd iphone-launch-sprint` trong hướng dẫn này sẽ lỗi. Nếu bạn đã tải ZIP, đổi tên thư mục thành `iphone-launch-sprint` là các bước sau vẫn dùng được.
+
+### Bước 3 — Cài các gói Python
+
+```powershell
+cd $env:USERPROFILE\Projects\iphone-launch-sprint
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -c "from playwright.sync_api import sync_playwright; print('all good')"
+```
+
+Hai thứ phải đúng trước khi làm tiếp:
+
+- Đầu dòng PowerShell hiện **`(.venv)`**
+- Lệnh cuối in **`all good`**
+
+### Bước 4 — Tạo file config
+
+```powershell
+copy config.example.yaml config.yaml
+notepad config.yaml
+```
+
+Notepad mở ra. Điền **`cvv`** (3 số trên thẻ), rồi Save và đóng.
+
+Các thứ khác để yên. Tên, địa chỉ, email và số điện thoại đã có trong file. Để nguyên `mode: test` và `dry_run: true`.
+
+### Bước 5 — Đăng nhập Apple
+
+```powershell
+python assist.py --warm-only
+```
+
+Một cửa sổ Chrome mở ra. **Đăng nhập Apple trong cửa sổ đó** và nhập mã 2FA trên điện thoại. Script đang đợi bạn — không phải bị treo.
+
+Sau đó nó thêm một iPhone thử, vào thanh toán, rồi **xóa túi** lại. Bình thường; chỉ để làm ấm phiên đăng nhập.
+
+**Để cửa sổ Chrome đó mở. Đừng đóng.** Đóng là phải đăng nhập và 2FA lại từ đầu.
+
+### Bước 6 — Chạy thử
+
+```powershell
+python assist.py --now
+```
+
+Xem nó chọn máy, từ chối đổi cũ lấy mới và AppleCare, rồi đi hết thanh toán. Nó dừng ở **Đặt hàng** và không bấm.
+
+Chạy vài lần đến khi chán.
+
+### Mở PowerShell lần sau
+
+Mỗi cửa sổ PowerShell mới cần hai dòng này trước:
+
+```powershell
+cd $env:USERPROFILE\Projects\iphone-launch-sprint
+.\.venv\Scripts\Activate.ps1
+```
+
+Đợi `(.venv)`, rồi mới chạy lệnh tiếp.
+
+### Bước 7 — Đêm mở bán
+
+Thứ Bảy **12 tháng 9 năm 2026 lúc 19:00** giờ Việt Nam. Đừng tự bấm Enter đúng 19:00. Bạn khởi động sớm, script sẽ đợi.
+
+**Gợi ý:** ngồi vào lúc **18:45**. Cắm sạc laptop. Điện thoại trong tay. Tắt Không làm phiền. Cùng máy bạn đã luyện tập.
+
+1. Mở `config.yaml` và đổi **một chữ**: `mode: test` → `mode: launch`. Lưu.
+2. Mở PowerShell, dán hai dòng ở **Mở PowerShell lần sau**. Đợi `(.venv)`.
+3. Làm ấm đăng nhập. Đăng nhập và làm 2FA nếu Apple hỏi. **Để Chrome mở.**
+
+```powershell
+python assist.py --warm-only
+```
+
+4. Trong **cùng** cửa sổ PowerShell, bắt đầu đợi:
+
+```powershell
+python assist.py --at-launch
+```
+
+Bạn sẽ thấy đếm ngược, kiểu `T-0: 8.4 min left`, rồi `T-0 — GO`. Đi chỗ khác cũng được. Đừng đóng Chrome. Đừng đóng PowerShell. Đừng cố canh giờ.
+
+Khi tới Đặt hàng thì nó dừng và kêu. **Bạn** bấm Đặt hàng. Script không bao giờ bấm.
+
+Bạn có thể chạy `--at-launch` sớm năm, mười hoặc ba mươi phút. Đợi không mất gì. Lỡ thì mất máy. Nếu đã quá 19:00, nó in `launch_at already past — sprinting NOW` rồi chạy ngay.
+
+---
+
+## Khi có chuyện không ổn
+
+| Bạn thấy gì | Nghĩa là gì |
+|---|---|
+| `command not found: python` | Bạn đang dùng Mac. Dùng `python3`. |
+| `python3 is not recognized` | Bạn đang dùng Windows. Dùng `python`. |
+| `No module named 'yaml'` | Dòng lệnh thiếu `(.venv)`. Chạy hai dòng “mở lần sau” trước. |
+| `Invalid timezone: Asia/Ho_Chi_Minh` | Bản cũ. Trong thư mục project, đã có `(.venv)`: `python3 -m pip install -r requirements.txt` (Windows: `py -3 -m pip install -r requirements.txt`). |
+| `git: command not found` | Bước 1 chưa xong. Đợi, rồi mở Terminal hoặc PowerShell mới. |
+| Apple hỏi đăng nhập mỗi lần chạy | Chrome bị đóng. Chạy `--warm-only` lại và để mở. |
+| Như bị kẹt ở trang đăng nhập | Nó đang đợi bạn. Nhập mã 2FA trong cửa sổ Chrome đó. |
+| Không có gì xảy ra 10–20 giây | Đó là Apple đang tải trang. Đừng bấm gì. |
+| `USER PICK waiting for COLOR…` (hoặc SIZE, hoặc STORAGE) | Tự bấm ô đó trong Chrome, lần chạy sẽ tiếp tục. |
+| `REFUSE: not iPhone 18` | Nó vào nhầm máy và dừng cố ý. Túi không bị thêm gì. |
+| `Could not empty bag` | Mở túi Apple trong Chrome, xóa hết bằng tay, rồi chạy lại. |
+
+---
+
+# English
+
 A practice script for buying an iPhone on **apple.com/vn**.
 
 It fills the whole checkout for you and then **stops at the Đặt hàng button**. It never clicks it. You do. `dry_run: true` is required and the script refuses to start without it.
@@ -13,12 +327,11 @@ A full run takes about a minute. Roughly one second of that is our clicking; the
 
 ## Before you start
 
-You need these four things. Get them now, not on launch night.
+You need these three things. Get them now, not on launch night.
 
 1. **An Apple ID** with your card and shipping address already saved, and the card's **billing address set to Vietnam**.
 2. **Your phone**, for the Apple 2FA code.
-3. **A GitHub account.** This repo is private, so the owner (**kolbeinng**) must add you under Settings → Collaborators.
-4. **Your card's CVV** (the 3 digits). You type it on your own computer. It never goes to GitHub.
+3. **Your card's CVV** (the 3 digits). You type it on your own computer. It never goes to GitHub.
 
 Then pick your computer:
 
@@ -57,28 +370,13 @@ else
   echo "Developer tools: asking macOS to install - click Install in the popup"
   xcode-select --install
 fi
-
-echo
-echo "Chrome:  $( [ -d '/Applications/Google Chrome.app' ] && echo OK || echo MISSING )"
-echo "git:     $(git --version 2>/dev/null || echo MISSING)"
-echo "python3: $(python3 --version 2>&1 || echo MISSING)"
 ```
 
-This installs Google Chrome and asks macOS for the developer tools (that is where `git` comes from). Every line tells you what it is doing, and the last three lines are the summary that matters.
+This installs Google Chrome and asks macOS for the developer tools (that is where `git` comes from). `already installed - skipping` is a success — that part was already done.
 
-**Read the summary.** All three should say `OK` or print a version number:
+**If a window pops up saying "Install the command line developer tools?"** — click **Install**, agree, and wait until it finishes. This can take 5 to 15 minutes.
 
-```
-Chrome:  OK
-git:     git version 2.50.1 (Apple Git-155)
-python3: Python 3.14.6
-```
-
-`already installed - skipping` is a success, not a problem — it means that part was done before you started.
-
-**If a window pops up saying "Install the command line developer tools?"** — click **Install**, agree, and wait until it finishes. This can take 5 to 15 minutes. While it runs, `git` will still say `MISSING`; that is expected.
-
-When it is done, **close Terminal and open a new one**, then paste the block again. This time `git` should print a version.
+When it is done, **close Terminal and open a new one**, then go to step 2.
 
 ### Step 2 — Check the tools, then download the project
 
@@ -91,19 +389,11 @@ git clone https://github.com/kolbeinng/iphone-launch-sprint.git
 cd iphone-launch-sprint
 ```
 
-Both `git` and `python3` must print a version number, and you must see them **before** you run the clone. On a brand-new Mac, `git --version` pops up a dialog offering to install Apple's developer tools instead of printing anything. Click **Install**, wait for it to finish, then run `git --version` again. Until it prints a version, `git clone` cannot work.
+Both `git` and `python3` must print a version number. On a brand-new Mac, `git --version` may pop up a dialog instead. Click **Install**, wait, then run `git --version` again. Until it prints a version, `git clone` cannot work.
 
-The repo is public, so nothing will ask you to sign in to GitHub. If you are prompted for a username or password, the address has been typed wrong — copy the `git clone` line again.
+The repo is public, so nothing will ask you to sign in to GitHub. If it asks for a username or password, the address was typed wrong — copy the `git clone` line again.
 
-**Use the `git clone` above, not the green Code → Download ZIP button.** The ZIP unpacks to a folder called `iphone-launch-sprint-main`, because GitHub adds the branch name to it, so every `cd iphone-launch-sprint` in this guide would fail. It also is not a git checkout, so you cannot pull fixes later. If you already took the ZIP, rename the folder to `iphone-launch-sprint` and the rest of the guide works.
-
-**Before moving on, check the folder is really there:**
-
-```bash
-cd ~/Projects/iphone-launch-sprint && pwd
-```
-
-It must print `/Users/<your-name>/Projects/iphone-launch-sprint`. If it says `no such file or directory`, the clone did not happen — scroll up for the error from `git clone` and fix that before step 3. Do not paste step 3 until this works, because those commands would otherwise build the venv in the wrong folder.
+**Use the `git clone` above, not the green Code → Download ZIP button.** The ZIP unpacks to a folder called `iphone-launch-sprint-main`, so every `cd iphone-launch-sprint` in this guide would fail. If you already took the ZIP, rename the folder to `iphone-launch-sprint` and the rest of the guide works.
 
 ### Step 3 — Install the Python packages
 
@@ -128,28 +418,9 @@ cp config.example.yaml config.yaml
 open -e config.yaml
 ```
 
-TextEdit opens. Change these to **your own** details, then press ⌘S to save and close the window:
+TextEdit opens. Fill in **`cvv`** (your card's 3 digits), then press ⌘S to save and close the window.
 
-| Setting | What to put |
-|---|---|
-| `cvv` | your card's 3 digits |
-| `shipping_address` | your name, street, city, district |
-| `contact` | your email and phone |
-
-Leave `mode: test` and `dry_run: true` alone.
-
-**Which phone it picks** is four fields, and the file explains each one where you edit it:
-
-| Field | What it does |
-|---|---|
-| `year` | The guard. A page from any other generation is refused before anything is added to the bag |
-| `model` | `pro-max`, `pro`, `plus`, `base` or `air`. Picks the size tile and decides which check runs |
-| `colors` | The one that breaks on launch night. Write the English name |
-| `storages` | Forgiving — `"256"` matches `"256GB"` |
-
-You do not set the screen size or the hub search words. Both are worked out from `year` and `model`.
-
-`year` is really the word that has to appear in "iPhone ___", so a phone with no number in its name uses the family word instead. iPhone Air is `year: air` with `model: air`.
+Leave everything else alone. The name, address, email and phone are already in the file. Leave `mode: test` and `dry_run: true` alone.
 
 ### Step 5 — Sign in to Apple
 
@@ -182,7 +453,33 @@ cd ~/Projects/iphone-launch-sprint
 source .venv/bin/activate
 ```
 
-Wait for `(.venv)`, then run `python3 assist.py --now`.
+Wait for `(.venv)`, then you can run the next command.
+
+### Step 7 — Launch night
+
+Saturday **12 September 2026 at 19:00** Vietnam time. You do not try to press Return at 19:00 yourself. You start early, and the script waits.
+
+**The suggestion:** sit down at **18:45**. Laptop plugged in. Phone in your hand. Do Not Disturb off. Same computer you practised on.
+
+1. Open `config.yaml` and change **one word**: `mode: test` → `mode: launch`. Save.
+2. Open Terminal and paste the two lines from **Opening Terminal again later**. Wait for `(.venv)`.
+3. Warm the login. Sign in and do 2FA if Apple asks. **Leave Chrome open.**
+
+```bash
+python3 assist.py --warm-only
+```
+
+4. In the **same** Terminal window, start the wait:
+
+```bash
+python3 assist.py --at-launch
+```
+
+You will see a countdown, like `T-0: 8.4 min left`, then `T-0 — GO`. Walk away. Do not close Chrome. Do not quit Terminal. Do not try to time it.
+
+When it reaches Đặt hàng it stops and beeps. **You** click Đặt hàng. The script never clicks it.
+
+You can start `--at-launch` five, ten or thirty minutes early. Waiting is free. Missing it is not. If 19:00 has already passed, it prints `launch_at already past — sprinting NOW` and goes immediately.
 
 ---
 
@@ -217,9 +514,9 @@ cd iphone-launch-sprint
 
 Both must print a version number. If not, you are still in the old PowerShell window — open a new one.
 
-A browser window will open asking you to sign in to GitHub. Sign in as yourself. If you get **404**, you do not have access to the repo yet — ask the owner to add you.
+The repo is public, so nothing will ask you to sign in to GitHub. If it asks for a username or password, the address was typed wrong — copy the `git clone` line again.
 
-**Use the `git clone` above, not the green Code → Download ZIP button.** The ZIP unpacks to a folder called `iphone-launch-sprint-main`, because GitHub adds the branch name to it, so every `cd iphone-launch-sprint` in this guide would fail. It also is not a git checkout, so you cannot pull fixes later. If you already took the ZIP, rename the folder to `iphone-launch-sprint` and the rest of the guide works.
+**Use the `git clone` above, not the green Code → Download ZIP button.** The ZIP unpacks to a folder called `iphone-launch-sprint-main`, so every `cd iphone-launch-sprint` in this guide would fail. If you already took the ZIP, rename the folder to `iphone-launch-sprint` and the rest of the guide works.
 
 ### Step 3 — Install the Python packages
 
@@ -244,17 +541,9 @@ copy config.example.yaml config.yaml
 notepad config.yaml
 ```
 
-Notepad opens. Change these to **your own** details, then Save and close:
+Notepad opens. Fill in **`cvv`** (your card's 3 digits), then Save and close.
 
-| Setting | What to put |
-|---|---|
-| `cvv` | your card's 3 digits |
-| `shipping_address` | your name, street, city, district |
-| `contact` | your email and phone |
-
-Leave `mode: test` and `dry_run: true` alone.
-
-Which phone it picks is the same four fields as on the Mac side above: `year`, `model`, `colors`, `storages`. Write colours in English.
+Leave everything else alone. The name, address, email and phone are already in the file. Leave `mode: test` and `dry_run: true` alone.
 
 ### Step 5 — Sign in to Apple
 
@@ -287,146 +576,33 @@ cd $env:USERPROFILE\Projects\iphone-launch-sprint
 .\.venv\Scripts\Activate.ps1
 ```
 
-Wait for `(.venv)`, then run `python assist.py --now`.
+Wait for `(.venv)`, then you can run the next command.
 
----
+### Step 7 — Launch night
 
-## Getting fixes before launch night
+Saturday **12 September 2026 at 19:00** Vietnam time. You do not try to press Enter at 19:00 yourself. You start early, and the script waits.
 
-This is still being corrected as Apple's pages change, so pull before you rely on it. From the project folder, with `(.venv)` showing:
+**The suggestion:** sit down at **18:45**. Laptop plugged in. Phone in your hand. Do Not Disturb off. Same computer you practised on.
 
-```bash
-git pull
-python3 -m pip install -r requirements.txt
-```
-
-On Windows the second line is `py -3 -m pip install -r requirements.txt`.
-
-`git pull` never touches `config.yaml` — it is ignored by git, so your CVV and address stay as you left them. If `git pull` complains that you have local changes, you edited a tracked file by mistake; `git stash` puts it aside and lets the pull through.
-
-**If `git pull` says it cannot find the remote ref `cursor/dynamic-sku-select`,** that computer was set up before the branch was renamed to `main`. Run these once and it is fixed for good:
-
-```bash
-git fetch origin
-git checkout -B main origin/main
-git branch -u origin/main
-```
-
----
-
-## The commands
-
-That is the whole thing. Everything else is setup.
-
-| Command | What it does |
-|---|---|
-| `assist.py --warm-only` | Signs in to Apple and checkout, then empties the bag. Run it before launch. |
-| `assist.py --now` | The full run. Stops at Đặt hàng. |
-| `assist.py --at-launch` | Same as `--now`, but waits until `launch_at` in your config first. |
-| `probe_family.py` | Checks your config against the live Apple page. Changes nothing. |
-
-On a Mac put `python3` in front. On Windows put `python` in front. So the full run on a Mac is `python3 assist.py --now`.
-
-Launch-night steps and what each checkout screen means: **[checklist.md](checklist.md)**.
-
-### Using `--at-launch` on the night
-
-The point of `--at-launch` is that you never race a clock by hand. You start it early, walk away, and it sprints at the exact `launch_at` time from your config. This is the flag you use on launch night.
-
-**About ten minutes before the launch time**, open a Terminal or PowerShell window, get into the project folder with the venv on, and run:
-
-Mac:
-
-```bash
-cd ~/Projects/iphone-launch-sprint
-source .venv/bin/activate
-python3 assist.py --warm-only
-```
-
-Windows:
+1. Open `config.yaml` and change **one word**: `mode: test` → `mode: launch`. Save.
+2. Open PowerShell and paste the two lines from **Opening PowerShell again later**. Wait for `(.venv)`.
+3. Warm the login. Sign in and do 2FA if Apple asks. **Leave Chrome open.**
 
 ```powershell
-cd $env:USERPROFILE\Projects\iphone-launch-sprint
-.\.venv\Scripts\Activate.ps1
 python assist.py --warm-only
 ```
 
-Sign in to Apple in the Chrome window it opens, do the 2FA from your phone. It will add a practice iPhone, go to checkout, then empty the bag. That is normal — it exists to prove your session is warm and to skip the 2FA later. When it says `browser LEFT OPEN (session warm)`, **leave that Chrome window alone**. Do not close it. Do not press ⌘Q. Do not restart Chrome.
+4. In the **same** PowerShell window, start the wait:
 
-**Then, still comfortably before launch time**, in the same window run:
-
-```bash
-python3 assist.py --at-launch      # Mac
-python  assist.py --at-launch      # Windows
+```powershell
+python assist.py --at-launch
 ```
 
-It will print a line like `Waiting until 2026-09-12 19:00:00 (T-0)…` and then a countdown that gets more frequent as the time approaches:
+You will see a countdown, like `T-0: 8.4 min left`, then `T-0 — GO`. Walk away. Do not close Chrome. Do not close PowerShell. Do not try to time it.
 
-```
-T-0: 8.4 min left
-T-0: 8.2 min left
-...
-T-0: 25.0s left
-T-0: 24.0s left
-...
-T-0 — GO
-```
+When it reaches Đặt hàng it stops and beeps. **You** click Đặt hàng. The script never clicks it.
 
-Once it prints `GO`, you do not touch anything. The bag was already emptied when `--at-launch` started, so T-0 opens the buy page straight away. About a minute later it reaches the Đặt hàng button, stops, and beeps. That is the moment you click Đặt hàng yourself. The script never clicks it.
-
-The whole point is that you can start `--at-launch` **five, ten, thirty minutes** before Apple opens. It just waits. Do not try to time it. If you are not sure of the exact minute, start it earlier — waiting is free, missing it is not.
-
-If the launch time has already passed when you start it, it does not sulk — it prints `launch_at already past — sprinting NOW` and goes immediately.
-
-If Apple has not published the new iPhone page yet when the clock hits `launch_at`, the script polls the guessed URL and the hub until the page appears, then continues. You do not need to do anything.
-
-**One rule about the Chrome window:** the same Chrome that `--warm-only` opened must still be open when `--at-launch` fires. That window is your logged-in Apple session. Close it and you have to sign in and 2FA again, and you have lost the sprint.
-
-### What `probe_family.py` is for
-
-The script has to click the colour, size and storage you asked for in `config.yaml`. It finds them by matching the words you wrote against the words Apple shows on the page. If Apple uses a different word, the script cannot find your choice, so it stops and waits for you to click it by hand.
-
-That matters because Apple renames colours between iPhone generations. "Cam Vũ Trụ" exists on the iPhone 17 Pro but not on the iPhone 16, which uses "Hồng", "Trắng", "Đen" and so on.
-
-`probe_family.py` tells you in about 5 seconds whether your words match, before it costs you anything:
-
-```
-COLOR: [dimensionColorsilver='Bạc', dimensionColorcosmicorange='Cam Vũ Trụ', dimensionColordeepblue='Xanh Đậm']
-  prefs: MATCH on 'cosmicorange' → dimensionColorcosmicorange
-VERDICT: config would sprint clean
-```
-
-That is what you want to see. If instead it says:
-
-```
-prefs: NO MATCH for COLOR — tried ['burgundy', 're:burgundy|đỏ']
-       available: [dimensionColorglacier='Xanh Glacier', dimensionColorsilver='Bạc']
-```
-
-then copy one of the names it lists under `available` into the `colors` list in `config.yaml` and run it again until it says `ALL CLEAR`.
-
-**Write colours in English.** Look at the line above: the label Apple shows you is Vietnamese, but the handle in front of it stays English. The script matches your word against both, so `cosmicorange` picks the tile that reads "Cam Vũ Trụ". Prefer English, because the Vietnamese names cannot be guessed in advance — Apple translated Ultramarine as "Xanh Lưu Ly" and Teal as "Xanh Mòng Két". Either works, but only the English one is predictable before the page exists.
-
-**Before the new iPhone is announced, expect this instead — it is normal, not a fault:**
-
-```
-h1:      'Chúng tôi không tìm được trang mà bạn đang tìm.'
-VERDICT: not a live configure page. The sprint would skip this URL.
-ATTENTION — at least one page is dead or would stop the sprint
-```
-
-Apple has not published the page yet, so there is nothing to check. You cannot get a useful answer until the phone is on sale. Run it on launch night the moment the page goes live, before the real run.
-
-### Trying a different phone without touching your real config
-
-Every command takes `-c` to point at a different config file. Your own `config.yaml` is left alone:
-
-```bash
-python3 probe_family.py -c /tmp/mytest.yaml
-python3 assist.py -c /tmp/mytest.yaml --now
-```
-
-Keep practice configs **outside** the project folder, as in `/tmp` above. Your config file contains your card's security code, and the project folder is a git repo.
+You can start `--at-launch` five, ten or thirty minutes early. Waiting is free. Missing it is not. If 19:00 has already passed, it prints `launch_at already past — sprinting NOW` and goes immediately.
 
 ---
 
@@ -436,13 +612,12 @@ Keep practice configs **outside** the project folder, as in `/tmp` above. Your c
 |---|---|
 | `command not found: python` | You are on a Mac. Use `python3`. |
 | `python3 is not recognized` | You are on Windows. Use `python`. |
-| `No module named 'yaml'` | Your line is missing `(.venv)`. Run the activate line first. |
-| `Invalid timezone: Asia/Ho_Chi_Minh` | Old clone. Run the install line again: `pip install -r requirements.txt`. |
+| `No module named 'yaml'` | Your line is missing `(.venv)`. Run the two “open again later” lines first. |
+| `Invalid timezone: Asia/Ho_Chi_Minh` | Old clone. From the project folder, with `(.venv)` showing: `python3 -m pip install -r requirements.txt` (Windows: `py -3 -m pip install -r requirements.txt`). |
 | `git: command not found` | Step 1 is not finished. Wait, then use a new Terminal or PowerShell. |
-| `404` when downloading the project | You do not have access to the private repo yet. |
 | Apple asks you to sign in on every run | Chrome got closed. Run `--warm-only` again and leave it open. |
 | It seems stuck on a sign-in page | It is waiting for you. Finish the 2FA code in that Chrome window. |
 | Nothing happens for 10–20 seconds | That is Apple's page loading. Do not click anything. |
-| `USER PICK waiting for COLOR…` (or SIZE, or STORAGE) | Your words in `config.yaml` do not match what Apple shows. Click it yourself in Chrome and the run continues. Then fix your config with `probe_family.py`. |
-| `REFUSE: not iPhone 18` | A safety guard. It landed on the wrong phone's page and stopped rather than order the wrong thing. Nothing was added to your bag. |
+| `USER PICK waiting for COLOR…` (or SIZE, or STORAGE) | Click that tile yourself in Chrome and the run continues. |
+| `REFUSE: not iPhone 18` | It landed on the wrong phone and stopped on purpose. Nothing was added to your bag. |
 | `Could not empty bag` | Open the Apple bag in Chrome, remove everything by hand, then run again. |
