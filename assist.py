@@ -4343,34 +4343,65 @@ def _fill_new_shipping_address(
     contact: dict | None = None,
     timer: StageTimer | None = None,
 ) -> None:
-    """Select 'Sử dụng địa chỉ mới', fill address + contact (prefind/verify style)."""
+    """Fill shipping address + contact.
+
+    Returning Apple IDs get a 'Sử dụng địa chỉ mới' radio. A brand-new account
+    has no radios — the form is already open (firstName/email already in DOM).
+    """
     contact = contact or {}
-    log("Selecting Sử dụng địa chỉ mới + filling address + contact")
-    page.locator('input[data-autom="newAddress"]').first.wait_for(
-        state="attached", timeout=15_000
-    )
-    _select_radio_until_checked(
-        page,
-        'input[data-autom="newAddress"]',
-        label="newAddress",
-        text_hints=["Sử dụng địa chỉ mới"],
-        timeout_ms=6_000,
-        attempts=5,
-    )
+    log("Filling shipping address + contact")
     page.wait_for_function(
-        """() => !!document.querySelector('select[data-autom="form-field-state"]')""",
-        timeout=5_000,
+        """() => !!(
+          document.querySelector('input[data-autom="newAddress"]')
+          || document.querySelector('[data-autom="form-field-firstName"]')
+          || document.querySelector('[data-autom="form-field-street"]')
+        )""",
+        timeout=15_000,
     )
-    if timer:
-        timer.mark("15a newAddress selected (verified)")
+    radio = page.locator('input[data-autom="newAddress"]')
+    if radio.count() > 0:
+        log("Selecting Sử dụng địa chỉ mới")
+        _select_radio_until_checked(
+            page,
+            'input[data-autom="newAddress"]',
+            label="newAddress",
+            text_hints=["Sử dụng địa chỉ mới"],
+            timeout_ms=6_000,
+            attempts=5,
+        )
+        try:
+            page.wait_for_function(
+                """() => !!document.querySelector(
+                  'select[data-autom="form-field-state"], [data-autom="form-field-street"]'
+                )""",
+                timeout=5_000,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        if timer:
+            timer.mark("15a newAddress selected (verified)")
+    else:
+        log(
+            "No newAddress radio — first-time form is already open "
+            "(email/name fields present). Filling it."
+        )
+        if timer:
+            timer.mark("15a first-time address form")
 
     state = addr.get("state") or "Thành phố Hồ Chí Minh"
     city = addr.get("city") or "Quận Bình Thạnh"
     district = addr.get("district") or ""
 
-    # Skip cascade selects when fulfillment already seeded the right values
-    cur_state = _select_current_label(page, "form-field-state")
-    if state.lower() not in cur_state.lower() and "hồ chí minh" not in cur_state.lower():
+    # Skip cascade selects when fulfillment already seeded the right values,
+    # or when this is a first-time form with no tỉnh/quận dropdowns.
+    has_state = page.locator('select[data-autom="form-field-state"]').count() > 0
+    has_city = page.locator('select[data-autom="form-field-city"]').count() > 0
+    cur_state = _select_current_label(page, "form-field-state") if has_state else ""
+    if not has_state:
+        log("No state/tỉnh select on this shipping form — skip")
+        if timer:
+            timer.mark("15b1 no state select (skip)")
+    elif state.lower() not in cur_state.lower() and "hồ chí minh" not in cur_state.lower():
         if not _select_option_native(page, "form-field-state", state, wait_sec=8.0):
             raise RuntimeError(f"Could not select state/tỉnh {state!r}")
         log(f"Selected state: {state}")
@@ -4381,8 +4412,12 @@ def _fill_new_shipping_address(
         if timer:
             timer.mark("15b1 state already set (skip)")
 
-    cur_city = _select_current_label(page, "form-field-city")
-    if city.lower() not in cur_city.lower() and "bình thạnh" not in cur_city.lower():
+    cur_city = _select_current_label(page, "form-field-city") if has_city else ""
+    if not has_city:
+        log("No city/quận select on this shipping form — skip")
+        if timer:
+            timer.mark("15b2 no city select (skip)")
+    elif city.lower() not in cur_city.lower() and "bình thạnh" not in cur_city.lower():
         if not _select_option_native(page, "form-field-city", city, wait_sec=12.0):
             raise RuntimeError(f"Could not select city/quận {city!r}")
         log(f"Selected city/quận: {city}")
@@ -4452,49 +4487,66 @@ def _fill_new_shipping_address(
             timer.mark("15c phone")
 
     if district:
-        t0 = time.perf_counter()
-        cur_d = _select_current_label(page, "form-field-district")
-        if district.lower() not in cur_d.lower():
-            _wait_js_heartbeat(
-                page,
-                """(want) => {
-                  const sel = document.querySelector(
-                    'select[data-autom="form-field-district"]'
-                  );
-                  if (!sel || sel.disabled) return false;
-                  const w = String(want || '').toLowerCase();
-                  return Array.from(sel.options).some((o) => {
-                    const t = (o.textContent || '').trim().toLowerCase();
-                    return t && (t === w || t.includes(w));
-                  });
-                }""",
-                arg=district,
-                label="phường options after quận (Apple cascade)",
-                timeout_ms=12_000,
-                snapshot_js=_SNAP_CHECKOUT,
-            )
-            # Playwright select_option — React commits this reliably
-            if not _select_option_by_label(
-                page, "form-field-district", district, wait_sec=4.0
-            ):
-                opts = page.evaluate(
-                    """() => {
-                      const s = document.querySelector('select[data-autom="form-field-district"]');
-                      return s ? Array.from(s.options).map((o) => (o.textContent || '').trim()) : [];
-                    }"""
-                )
-                raise RuntimeError(
-                    f"Could not select phường/district {district!r}; options={opts!r}"
-                )
-            log(f"Selected phường trước sáp nhập: {district}")
+        has_district = (
+            page.locator('select[data-autom="form-field-district"]').count() > 0
+        )
+        if not has_district:
+            log("No phường select on this shipping form — skip")
+            if timer:
+                timer.mark("15d no phường select (skip)")
         else:
-            # Re-select anyway so React validation sees a change event
-            _select_option_by_label(page, "form-field-district", district, wait_sec=2.0)
-            log(f"Phường confirmed: {district}")
-        ms = (time.perf_counter() - t0) * 1000
-        log(f"Phường step done ({ms:.0f}ms)")
-        if timer:
-            timer.mark("15d phường")
+            t0 = time.perf_counter()
+            cur_d = _select_current_label(page, "form-field-district")
+            if district.lower() not in cur_d.lower():
+                _wait_js_heartbeat(
+                    page,
+                    """(want) => {
+                      const sel = document.querySelector(
+                        'select[data-autom="form-field-district"]'
+                      );
+                      if (!sel || sel.disabled) return false;
+                      const w = String(want || '').toLowerCase();
+                      return Array.from(sel.options).some((o) => {
+                        const t = (o.textContent || '').trim().toLowerCase();
+                        return t && (t === w || t.includes(w));
+                      });
+                    }""",
+                    arg=district,
+                    label="phường options after quận (Apple cascade)",
+                    timeout_ms=12_000,
+                    snapshot_js=_SNAP_CHECKOUT,
+                )
+                # Playwright select_option — React commits this reliably
+                if not _select_option_by_label(
+                    page, "form-field-district", district, wait_sec=4.0
+                ):
+                    opts = page.evaluate(
+                        """() => {
+                          const s = document.querySelector(
+                            'select[data-autom="form-field-district"]'
+                          );
+                          return s
+                            ? Array.from(s.options).map(
+                                (o) => (o.textContent || '').trim()
+                              )
+                            : [];
+                        }"""
+                    )
+                    raise RuntimeError(
+                        f"Could not select phường/district {district!r}; "
+                        f"options={opts!r}"
+                    )
+                log(f"Selected phường trước sáp nhập: {district}")
+            else:
+                # Re-select anyway so React validation sees a change event
+                _select_option_by_label(
+                    page, "form-field-district", district, wait_sec=2.0
+                )
+                log(f"Phường confirmed: {district}")
+            ms = (time.perf_counter() - t0) * 1000
+            log(f"Phường step done ({ms:.0f}ms)")
+            if timer:
+                timer.mark("15d phường")
 
 
 def _advance_fulfillment_to_shipping(
@@ -4699,11 +4751,17 @@ def advance_checkout_to_payment(
             """() => {
               const n = document.querySelector('input[data-autom="newAddress"]');
               const street = document.querySelector('[data-autom="form-field-street"]');
-              const district = document.querySelector('select[data-autom="form-field-district"]');
+              const first = document.querySelector('[data-autom="form-field-firstName"]');
+              const district = document.querySelector(
+                'select[data-autom="form-field-district"]'
+              );
+              const radioOk = !n || !!n.checked;
               const districtOk = !district || !!(district.value && district.value.trim());
-              return !!(n && n.checked && street && street.value && street.value.length > 3 && districtOk);
+              const streetOk = !!(street && (street.value || '').trim().length > 3);
+              const firstOk = !!(first && (first.value || '').trim().length > 1);
+              return radioOk && districtOk && (streetOk || firstOk);
             }""",
-            timeout=3_000,
+            timeout=8_000,
         )
         timer.since(t_verify, "15e address verified", kind="wait")
 
