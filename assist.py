@@ -2644,6 +2644,44 @@ def _billing_popup(page):
     ).first
 
 
+def _billing_inline_form_visible(page) -> bool:
+    """True only when Apple is actually asking for a billing address on-page.
+
+    Must NOT fire on a machine that already has a card address and goes
+    straight to Đặt hàng. Hidden leftover inputs do not count — the street
+    field has to be visible and empty, or a Lưu / error prompt has to show.
+    """
+    try:
+        return bool(
+            page.evaluate(
+                """() => {
+                  const href = location.href || '';
+                  const step = ((href.match(/[?&]_s=([^&]+)/) || [])[1] || '');
+                  if (/Shipping/i.test(href) || /Shipping/i.test(step)) return false;
+                  if (!(/Billing/i.test(href) || /Billing/i.test(step))) return false;
+                  const vis = (el) => !!(el && (el.offsetParent || el.getClientRects().length));
+                  const street = document.querySelector('input[data-autom="form-field-street"]');
+                  const save = document.querySelector('[data-autom="address-savebutton"]');
+                  const emptyStreet = vis(street) && !(street.value || '').trim();
+                  const askingSave = vis(save);
+                  const err = Array.from(document.querySelectorAll(
+                    '[class*="error"], .form-message-error, [aria-invalid="true"]'
+                  )).some((e) => vis(e) && /địa chỉ|address|billing|thanh toán/i.test(
+                    e.innerText || ''
+                  ));
+                  return emptyStreet || askingSave || err;
+                }"""
+            )
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _billing_prompt_visible(page) -> bool:
+    """True only if Apple is already showing a billing address UI to fill."""
+    return _billing_address_editor_open(page) or _billing_inline_form_visible(page)
+
+
 def _billing_address_editor_open(page) -> bool:
     """True when the Chỉnh Sửa Địa Chỉ popup is visible."""
     try:
@@ -3058,20 +3096,28 @@ def _sync_billing_address_from_checkout(
     if not isinstance(addr, dict) or not addr:
         log("Billing address sync skipped — no checkout.billing_address")
         return
-    if _billing_address_already_ok(page, addr):
+    if _billing_address_already_ok(page, addr) and not _billing_prompt_visible(page):
         if timer:
             timer.mark("18b billing already OK (skip popup)")
         return
 
     t0 = time.perf_counter()
-    _open_billing_address_edit(page)
-    popup = _billing_popup(page)
-    popup.wait_for(state="visible", timeout=12_000)
-    page.locator(
-        'select[id*="editSavedBillingAddress"][data-autom="form-field-state"], '
-        '[role="dialog"] select[data-autom="form-field-state"]'
-    ).first.wait_for(state="attached", timeout=12_000)
-    log("FILL  billing popup — same method as shipping (native/by_label)")
+    popup_open = _billing_address_editor_open(page)
+    inline = (not popup_open) and _billing_inline_form_visible(page)
+    if not popup_open and not inline:
+        log("No billing address prompt — leaving the card address alone")
+        return
+    if popup_open:
+        popup = _billing_popup(page)
+        popup.wait_for(state="visible", timeout=12_000)
+        page.locator(
+            'select[id*="editSavedBillingAddress"][data-autom="form-field-state"], '
+            '[role="dialog"] select[data-autom="form-field-state"]'
+        ).first.wait_for(state="attached", timeout=12_000)
+        log("FILL  billing popup — same method as shipping (native/by_label)")
+    else:
+        popup = page
+        log("FILL  billing address on the payment page (no popup)")
 
     first_name = (addr.get("first_name") or "").strip()
     last_name = (addr.get("last_name") or "").strip()
@@ -3097,9 +3143,13 @@ def _sync_billing_address_from_checkout(
         log(f"Filled billing {label} ({(time.perf_counter() - t_f) * 1000:.0f}ms)")
 
     # --- cascade: SAME helpers as shipping (_select_option_native / by_label) ---
+    has_state = page.locator('select[data-autom="form-field-state"]').count() > 0
+    has_city = page.locator('select[data-autom="form-field-city"]').count() > 0
     t_state = time.perf_counter()
-    cur_state = _select_current_label(page, "form-field-state")
-    if (
+    cur_state = _select_current_label(page, "form-field-state") if has_state else ""
+    if not has_state:
+        log("No billing state/tỉnh select — skip")
+    elif (
         state.lower() not in (cur_state or "").lower()
         or "trước sáp" in (cur_state or "").lower()
     ):
@@ -3121,11 +3171,16 @@ def _sync_billing_address_from_checkout(
     if postal:
         _fill_one("form-field-postalCode", postal, "postalCode")
     else:
-        _clear_billing_postal(page)
+        try:
+            _clear_billing_postal(page)
+        except Exception:  # noqa: BLE001
+            log("FILL  billing postal clear skipped (no popup field)")
 
     t_city = time.perf_counter()
-    cur_city = _select_current_label(page, "form-field-city")
-    if (
+    cur_city = _select_current_label(page, "form-field-city") if has_city else ""
+    if not has_city:
+        log("No billing city/quận select — skip")
+    elif (
         city.lower() not in (cur_city or "").lower()
         or "trước sáp" in (cur_city or "").lower()
         or not (cur_city or "").strip()
@@ -3140,41 +3195,69 @@ def _sync_billing_address_from_checkout(
         timer.since(t_city, "18b2 select city/quận", kind="fill")
 
     if district:
-        t_d = time.perf_counter()
-        cur_d = _select_current_label(page, "form-field-district")
-        if district.lower() not in (cur_d or "").lower():
-            if not _select_option_by_label(
-                page, "form-field-district", district, wait_sec=12.0
-            ):
-                if not _select_option_native(
-                    page, "form-field-district", district, wait_sec=4.0
-                ):
-                    opts = page.evaluate(
-                        """() => {
-                          const s = document.querySelector(
-                            'select[data-autom="form-field-district"]'
-                          );
-                          return s
-                            ? Array.from(s.options).map(
-                                (o) => (o.textContent || '').trim()
-                              )
-                            : [];
-                        }"""
-                    )
-                    raise RuntimeError(
-                        f"Billing phường select failed: {district!r}; options={opts!r}"
-                    )
-            log(f"Selected billing phường: {district}")
+        has_district = (
+            page.locator('select[data-autom="form-field-district"]').count() > 0
+        )
+        if not has_district:
+            log("No billing phường select — skip")
         else:
-            _select_option_by_label(page, "form-field-district", district, wait_sec=2.0)
-            log(f"Billing phường confirmed: {district}")
-        log(f"Phường step done ({(time.perf_counter() - t_d) * 1000:.0f}ms)")
-        if timer:
-            timer.since(t_d, "18b4 phường", kind="fill")
+            t_d = time.perf_counter()
+            cur_d = _select_current_label(page, "form-field-district")
+            if district.lower() not in (cur_d or "").lower():
+                if not _select_option_by_label(
+                    page, "form-field-district", district, wait_sec=12.0
+                ):
+                    if not _select_option_native(
+                        page, "form-field-district", district, wait_sec=4.0
+                    ):
+                        opts = page.evaluate(
+                            """() => {
+                              const s = document.querySelector(
+                                'select[data-autom="form-field-district"]'
+                              );
+                              return s
+                                ? Array.from(s.options).map(
+                                    (o) => (o.textContent || '').trim()
+                                  )
+                                : [];
+                            }"""
+                        )
+                        raise RuntimeError(
+                            f"Billing phường select failed: {district!r}; "
+                            f"options={opts!r}"
+                        )
+                log(f"Selected billing phường: {district}")
+            else:
+                _select_option_by_label(
+                    page, "form-field-district", district, wait_sec=2.0
+                )
+                log(f"Billing phường confirmed: {district}")
+            log(f"Phường step done ({(time.perf_counter() - t_d) * 1000:.0f}ms)")
+            if timer:
+                timer.since(t_d, "18b4 phường", kind="fill")
 
-    # Save inside popup
+    # Save if Apple put a Lưu button (popup). Inline payment-page fields have none.
     t_save = time.perf_counter()
     save_btn = popup.locator('[data-autom="address-savebutton"]').first
+    has_save = False
+    try:
+        has_save = save_btn.count() > 0 and save_btn.is_visible()
+    except Exception:  # noqa: BLE001
+        has_save = False
+    if not has_save:
+        try:
+            alt = page.locator('[data-autom="address-savebutton"]').first
+            has_save = alt.count() > 0 and alt.is_visible()
+            if has_save:
+                save_btn = alt
+        except Exception:  # noqa: BLE001
+            has_save = False
+    if not has_save:
+        log("No Lưu Thay Đổi button — billing fields stay on the payment form")
+        if timer:
+            timer.since(t0, "18b sync billing address", kind="fill")
+        log(f"Billing address sync done ({(time.perf_counter() - t0) * 1000:.0f}ms)")
+        return
     save_btn.click(timeout=5_000)
     log(
         f"CLICK  Lưu Thay Đổi (billing popup): "
@@ -4894,56 +4977,60 @@ def advance_checkout_to_payment(
         cvv = str(checkout_cfg.get("cvv") or checkout_cfg.get("security_code") or "")
     _fill_cvv(page, cvv, timer=timer, mount_timeout_ms=3_000)
 
-    # Optional safety net (OFF by default). Prefer fixing card billing in Apple Account.
+    # Only fill billing when Apple actually asks (popup or empty on-page form).
+    # Machines that go straight to Đặt hàng are left alone.
     sync_billing = bool(
         isinstance(checkout_cfg, dict) and checkout_cfg.get("sync_billing_address")
+    )
+    force_billing = bool(
+        isinstance(checkout_cfg, dict)
+        and checkout_cfg.get("force_sync_billing_address")
     )
     if not sync_billing:
         log(
             "Billing sync OFF — using Apple Account card address "
-            "(fix it before launch; set sync_billing_address: true only as last resort)"
+            "(set sync_billing_address: true to fill it from config when Apple asks)"
         )
-    if sync_billing:
-        need_sync = _billing_address_editor_open(page)
-        if not need_sync:
-            force = bool(
-                isinstance(checkout_cfg, dict)
-                and checkout_cfg.get("force_sync_billing_address")
-            )
-            if force:
-                need_sync = True
-        if need_sync:
-            _sync_billing_address_from_checkout(page, bill_addr, timer=timer)
-            # Popup can wipe CVV — force re-fill without long visibility wait
-            if cvv:
-                still = page.evaluate(
-                    """(want) => {
-                      const el = document.querySelector(
-                        '[data-autom="security-code-input"]'
-                      );
-                      if (!el) return { ok: false, len: 0 };
-                      const v = (el.value || '').replace(/\\D/g, '');
-                      if (v === want) return { ok: true, len: v.length };
-                      const proto = window.HTMLInputElement.prototype;
-                      const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-                      if (desc && desc.set) desc.set.call(el, want);
-                      else el.value = want;
-                      const tracker = el._valueTracker;
-                      if (tracker && typeof tracker.setValue === 'function') {
-                        tracker.setValue('');
-                      }
-                      el.dispatchEvent(new Event('input', { bubbles: true }));
-                      el.dispatchEvent(new Event('change', { bubbles: true }));
-                      const v2 = (el.value || '').replace(/\\D/g, '');
-                      return { ok: v2 === want, len: v2.length };
-                    }""",
-                    re.sub(r"\D", "", cvv),
-                ) or {}
-                if still.get("ok"):
-                    log(f"FILL  CVV re-assert after address save (len={still.get('len')})")
-                else:
-                    log("CVV missing after address save — short remount re-fill")
-                    _fill_cvv(page, cvv, timer=timer, mount_timeout_ms=1_500)
+    prompt = _billing_prompt_visible(page)
+    if sync_billing and not prompt and not force_billing:
+        log("No billing address prompt — skipping fill")
+    if sync_billing and (prompt or force_billing):
+        if force_billing and not prompt:
+            try:
+                _open_billing_address_edit(page)
+            except Exception as open_exc:  # noqa: BLE001
+                log(f"force_sync_billing_address could not open editor: {open_exc}")
+        _sync_billing_address_from_checkout(page, bill_addr, timer=timer)
+        # Popup can wipe CVV — force re-fill without long visibility wait
+        if cvv:
+            still = page.evaluate(
+                """(want) => {
+                  const el = document.querySelector(
+                    '[data-autom="security-code-input"]'
+                  );
+                  if (!el) return { ok: false, len: 0 };
+                  const v = (el.value || '').replace(/\\D/g, '');
+                  if (v === want) return { ok: true, len: v.length };
+                  const proto = window.HTMLInputElement.prototype;
+                  const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+                  if (desc && desc.set) desc.set.call(el, want);
+                  else el.value = want;
+                  const tracker = el._valueTracker;
+                  if (tracker && typeof tracker.setValue === 'function') {
+                    tracker.setValue('');
+                  }
+                  el.dispatchEvent(new Event('input', { bubbles: true }));
+                  el.dispatchEvent(new Event('change', { bubbles: true }));
+                  const v2 = (el.value || '').replace(/\\D/g, '');
+                  return { ok: v2 === want, len: v2.length };
+                }""",
+                re.sub(r"\D", "", cvv),
+            ) or {}
+            if still.get("ok"):
+                log(f"FILL  CVV re-assert after address save (len={still.get('len')})")
+            else:
+                log("CVV missing after address save — short remount re-fill")
+                _fill_cvv(page, cvv, timer=timer, mount_timeout_ms=1_500)
 
     try:
         _click_review_and_stop_at_place_order(page, timer=timer)
@@ -4956,7 +5043,23 @@ def advance_checkout_to_payment(
             or "định dạng" in msg
             or "error" in msg
         ):
-            log(f"Review blocked — retry after billing sync: {exc}")
+            log(
+                f"Review blocked — waiting to see if Apple opens a billing "
+                f"address prompt: {exc}"
+            )
+            appeared = False
+            deadline = time.perf_counter() + 8.0
+            while time.perf_counter() < deadline:
+                if _billing_prompt_visible(page):
+                    appeared = True
+                    break
+                page.wait_for_timeout(200)
+            if not appeared:
+                log(
+                    "Review error but no billing prompt — "
+                    "not clicking Chỉnh sửa; leaving the card address alone"
+                )
+                raise
             _sync_billing_address_from_checkout(page, bill_addr, timer=timer)
             _fill_cvv(page, cvv, timer=timer)
             _click_review_and_stop_at_place_order(page, timer=timer)

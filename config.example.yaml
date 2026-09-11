@@ -134,9 +134,9 @@ checkout:
   location_district: "Quận Bình Thạnh"
   use_new_address: false
   cvv: ""
-  # Safety net, not a cost: with force off, this only fires when Apple actually
-  # opens the address editor, and it re-enables the automatic retry if the review
-  # step is ever blocked by a billing address error. Normal runs are unaffected.
+  # Fill billing only if Apple already popped up the form (or shows an empty
+  # on-page address). Machines that go straight to Đặt hàng are left alone.
+  # force_sync_billing_address: true would click Chỉnh sửa even without a prompt.
   sync_billing_address: true
   force_sync_billing_address: false
 
