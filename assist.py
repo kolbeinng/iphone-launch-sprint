@@ -2689,31 +2689,34 @@ _BILLING_PROMPT_JS = """() => {
   const vis = (el) => {
     if (!el) return false;
     const r = el.getBoundingClientRect();
-    if (r.width < 2 || r.height < 2) return false;
+    if (r.width < 8 || r.height < 8) return false;
+    const st = window.getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden') return false;
     return !!(el.offsetParent || el.getClientRects().length);
   };
   const href = location.href || '';
   const step = ((href.match(/[?&]_s=([^&]+)/) || [])[1] || '');
   if (/Shipping/i.test(href) || /Shipping/i.test(step)) return false;
 
-  const heading = Array.from(
-    document.querySelectorAll('h1, h2, h3, [role="heading"], legend')
-  ).some((h) => vis(h) && /chỉnh\\s*sửa\\s*địa\\s*chỉ|edit\\s+address/i.test(
-    h.innerText || ''
-  ));
-  if (heading) return true;
+  const titleRe = /chỉnh\\s*sửa\\s*địa\\s*chỉ|edit\\s+address/i;
+  const titled = Array.from(document.querySelectorAll(
+    'h1, h2, h3, h4, [role="heading"], legend, header, [class*="subheader"], [class*="title"]'
+  )).some((h) => vis(h) && titleRe.test((h.innerText || '').trim().slice(0, 80)));
+  if (titled) return true;
 
-  const save = Array.from(
-    document.querySelectorAll('[data-autom="address-savebutton"]')
-  ).some(vis);
+  const save = Array.from(document.querySelectorAll(
+    '[data-autom="address-savebutton"], button'
+  )).some((b) => vis(b) && (
+    b.getAttribute('data-autom') === 'address-savebutton'
+    || /lưu thay đổi|save changes/i.test((b.innerText || '').replace(/\\s+/g, ' ').trim())
+  ));
   if (save) return true;
 
   const dlg = document.querySelector(
     '[role="dialog"][aria-modal="true"], .rc-overlay-popup'
   );
   if (dlg && vis(dlg) && dlg.querySelector(
-    '[data-autom="address-savebutton"], input[data-autom="form-field-street"], '
-    + 'select[id*="editSavedBillingAddress"]'
+    '[data-autom="address-savebutton"], input[data-autom="form-field-street"]'
   )) {
     return true;
   }
@@ -2723,14 +2726,9 @@ _BILLING_PROMPT_JS = """() => {
 
   const emptyStreet = Array.from(
     document.querySelectorAll('input[data-autom="form-field-street"]')
-  ).some((el) => vis(el) && !(el.value || '').trim());
-  if (emptyStreet) return true;
-
-  return Array.from(document.querySelectorAll(
-    '[class*="error"], .form-message-error, [aria-invalid="true"], .form-message'
-  )).some((e) => vis(e) && /vui lòng điền|trường bắt buộc|mục này không hợp lệ|địa chỉ|address/i.test(
-    (e.innerText || '').slice(0, 240)
-  ));
+  ).some((el) => vis(el) && el.getBoundingClientRect().height > 12
+    && !(el.value || '').trim());
+  return emptyStreet;
 }"""
 
 
@@ -2793,8 +2791,6 @@ def _open_billing_address_edit(page) -> None:
     selectors = [
         'button[id*="editBillingAddress"]',
         "button.rf-creditcard-editaddress",
-        'button:has-text("Chỉnh sửa")',
-        'button:has-text("Edit")',
     ]
     last_err: Exception | None = None
     for attempt in range(1, 4):
@@ -3163,8 +3159,13 @@ def _billing_view_address(page) -> dict[str, str]:
             page.evaluate(
                 """() => {
                   const root = document.querySelector('.rf-creditcard-address')
-                    || document.querySelector('.rf-creditcard-savedcard-address')
-                    || document;
+                    || document.querySelector('.rf-creditcard-savedcard-address');
+                  if (!root) {
+                    return {
+                      first_name: '', last_name: '', street: '', city: '',
+                      district: '', postal_code: '', blob: ''
+                    };
+                  }
                   const dig = (autom) => {
                     const el = root.querySelector('[data-autom="' + autom + '"]');
                     return el ? (el.innerText || el.value || '').replace(/\\s+/g, ' ').trim() : '';
@@ -3232,8 +3233,6 @@ def _billing_card_incomplete(page, addr: dict) -> bool:
     Used to open Chỉnh sửa *before* the 9s failed-review hop. Must stay false
     when the card already shows a Vietnam address (Mac path).
     """
-    if _billing_prompt_visible(page):
-        return True
     try:
         info = page.evaluate(
             """() => {
@@ -3292,8 +3291,7 @@ def _click_billing_same_as_shipping(page) -> bool:
                   + (el.getAttribute('data-autom') || '') + ' '
                   + (el.id || '')
                 ).toLowerCase();
-                return /sameasshipping|same-as-shipping|useShippingAddress/i.test(t)
-                  || /giống địa chỉ giao|dùng địa chỉ giao hàng|same as shipping/i.test(t);
+                return /sameasshipping|same-as-shipping|useShippingAddress/i.test(t);
               });
               if (!hit) return '';
               const box = hit.matches('input') ? hit
@@ -3309,6 +3307,36 @@ def _click_billing_same_as_shipping(page) -> bool:
         return False
     log(f"CLICK  billing same-as-shipping via={hit}")
     return True
+
+
+def _visible_autom_input(page, autom: str):
+    """The on-screen field, not a leftover hidden shipping input."""
+    loc = page.locator(
+        f'input[data-autom="{autom}"], textarea[data-autom="{autom}"]'
+    )
+    chosen = None
+    try:
+        n = loc.count()
+    except Exception:  # noqa: BLE001
+        return None
+    for i in range(n):
+        el = loc.nth(i)
+        try:
+            box = el.bounding_box()
+            if not box or box["height"] < 8 or box["width"] < 8:
+                continue
+            if not el.is_visible():
+                continue
+        except Exception:  # noqa: BLE001
+            continue
+        try:
+            val = (el.input_value(timeout=400) or "").strip()
+        except Exception:  # noqa: BLE001
+            val = ""
+        if not val:
+            return el
+        chosen = el
+    return chosen
 
 
 def _sync_billing_address_from_checkout(
@@ -3332,31 +3360,16 @@ def _sync_billing_address_from_checkout(
         return
 
     t0 = time.perf_counter()
-    popup_open = _billing_address_editor_open(page)
-    inline = (not popup_open) and _billing_inline_form_visible(page)
-    if not popup_open and not inline:
+    if not _billing_prompt_visible(page):
         log("No billing address prompt — leaving the card address alone")
         return
-    if popup_open:
-        popup = _billing_popup(page)
-        try:
-            popup.wait_for(state="visible", timeout=4_000)
-        except Exception:  # noqa: BLE001
-            popup = page
-        try:
-            popup.locator(
-                'select[data-autom="form-field-state"], '
-                'input[data-autom="form-field-street"]'
-            ).first.wait_for(state="visible", timeout=4_000)
-        except Exception:  # noqa: BLE001
-            pass
-        log("FILL  billing popup — same method as shipping (native/by_label)")
-        if _click_billing_same_as_shipping(page):
-            page.wait_for_timeout(400)
-            # Shipping copy often sets tỉnh/quận/phường — skip the 10s cascade.
-    else:
-        popup = page
-        log("FILL  billing address on the payment page (no popup)")
+    popup = _billing_popup(page)
+    try:
+        popup.wait_for(state="visible", timeout=2_000)
+    except Exception:  # noqa: BLE001
+        popup = page.locator("body")
+    log("FILL  billing editor (visible fields only)")
+    _click_billing_same_as_shipping(page)
 
     first_name = (addr.get("first_name") or "").strip()
     last_name = (addr.get("last_name") or "").strip()
@@ -3373,12 +3386,15 @@ def _sync_billing_address_from_checkout(
             return
         t_f = time.perf_counter()
         _fill_fields_native(page, {autom: value})
-        try:
-            popup.locator(f'input[data-autom="{autom}"]').first.fill(
-                str(value), timeout=1_200, force=True
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        vis_in = _visible_autom_input(page, autom)
+        if vis_in is not None:
+            try:
+                vis_in.fill(str(value), timeout=1_200)
+            except Exception:  # noqa: BLE001
+                try:
+                    vis_in.fill(str(value), timeout=800, force=True)
+                except Exception:  # noqa: BLE001
+                    pass
         log(f"Filled billing {label} ({(time.perf_counter() - t_f) * 1000:.0f}ms)")
 
     def _skip_or_select(autom: str, want: str, pretty: str, *, wait_sec: float = 4.0) -> bool:
@@ -3476,6 +3492,16 @@ def _sync_billing_address_from_checkout(
             has_save = alt.count() > 0 and alt.is_visible()
             if has_save:
                 save_btn = alt
+        except Exception:  # noqa: BLE001
+            has_save = False
+    if not has_save:
+        try:
+            by_text = page.locator("button").filter(
+                has_text=re.compile(r"Lưu Thay Đổi|Save Changes", re.I)
+            )
+            if by_text.count() > 0 and by_text.first.is_visible():
+                save_btn = by_text.first
+                has_save = True
         except Exception:  # noqa: BLE001
             has_save = False
     if not has_save:
