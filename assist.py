@@ -3555,6 +3555,7 @@ def warm_checkout_sso(
     no_care: str,
     login_timeout_sec: int = 300,
     timeout_ms: int = 45_000,
+    checkout_cfg: dict | None = None,
 ) -> None:
     """
     Pre-warm secure*.store.apple.com checkout SSO (separate from account login).
@@ -3563,11 +3564,13 @@ def warm_checkout_sso(
       1) clear bag
       2) add one practice iPhone
       3) Thanh Toán → pass /signIn to Fulfillment (sets checkout SSO cookies)
-      4) empty bag again
-    Timed sprint then starts with an empty bag + warm SSO.
+      4) put the delivery address on the Apple account (saved match, else type new)
+      5) empty bag again
+    Does not touch the card — you save that on the Apple account yourself.
+    Timed sprint then starts with an empty bag + warm SSO + address already there.
     """
     log("Pre-warm checkout SSO (secure store) — not timed…")
-    log("Plan: empty bag → add iPhone → checkout SSO → empty bag again")
+    log("Plan: empty bag → add iPhone → checkout SSO → delivery address → empty bag")
     t0 = time.perf_counter()
 
     # Start clean so we don't stack leftovers from prior practice
@@ -3622,9 +3625,18 @@ def warm_checkout_sso(
     ms = (time.perf_counter() - t0) * 1000
     log(f"Checkout SSO cookies warm OK in {ms:.0f}ms → {page.url} (_s={step})")
 
+    log("Warm: putting delivery address in place (card is yours — we do not type it)…")
+    advance_checkout_to_payment(
+        page,
+        StageTimer(),
+        login_timeout_sec=login_timeout_sec,
+        checkout_cfg=checkout_cfg or {},
+        until="shipping",
+    )
+
     # Critical: leave basket empty for the real timed run
     empty_bag(page, reason="SSO warm done")
-    log("SSO warm complete — bag empty, secure-store session kept. Ready for T-0.")
+    log("SSO warm complete — bag empty, address saved, session kept. Ready for T-0.")
 
 
 def _match_select_option_label(texts: list[str], label: str) -> str | None:
@@ -4401,39 +4413,10 @@ def _fill_new_shipping_address(
             timer.mark("15d phường")
 
 
-def advance_checkout_to_payment(
-    page,
-    timer: StageTimer | None = None,
-    *,
-    login_timeout_sec: int = 300,
-    checkout_cfg: dict | None = None,
+def _advance_fulfillment_to_shipping(
+    page, timer: StageTimer, loc_city: str, loc_district: str
 ) -> None:
-    """
-    Apple VN path (dry-run stop at payment):
-      Fulfillment (HCM + Bình Thạnh) → Shipping (matching saved address, else new)
-      → Billing (saved card)
-    Never clicks review / Đặt hàng.
-    """
-    timer = timer or StageTimer()
-    checkout_cfg = checkout_cfg or {}
-    loc_city = checkout_cfg.get("location_city") or "Thành phố Hồ Chí Minh"
-    loc_district = checkout_cfg.get("location_district") or "Quận Bình Thạnh"
-    # shipping_address = delivery; billing_address = card. Legacy: address = shipping.
-    ship_addr = checkout_cfg.get("shipping_address") or checkout_cfg.get("address") or {}
-    if not isinstance(ship_addr, dict):
-        ship_addr = {}
-    bill_addr = checkout_cfg.get("billing_address") or ship_addr
-    if not isinstance(bill_addr, dict):
-        bill_addr = ship_addr
-    contact = checkout_cfg.get("contact") or {}
-    if not isinstance(contact, dict):
-        contact = {}
-
-    t_sso = time.perf_counter()
-    wait_checkout_signin_if_needed(page, login_timeout_sec)
-    timer.since(t_sso, "10b checkout SSO ready", kind="wait")
-
-    # ===== Fulfillment =====
+    """HCM + quận, then Continue onto the street-address page."""
     t_fulfill = time.perf_counter()
     page.wait_for_function(
         """() => {
@@ -4470,7 +4453,9 @@ def advance_checkout_to_payment(
           const checked = document.querySelector(
             'input[data-autom^="fulfillment-option-"]:checked'
           );
-          const target = prefer || checked || document.querySelector('input[data-autom^="fulfillment-option-"]');
+          const target = prefer || checked || document.querySelector(
+            'input[data-autom^="fulfillment-option-"]'
+          );
           if (!target || target.checked) return;
           const label = target.id
             ? document.querySelector('label[for="' + target.id + '"]')
@@ -4493,7 +4478,6 @@ def advance_checkout_to_payment(
     )
     timer.since(t_en, "12b fulfillment continue enabled", kind="wait")
 
-    # Same pattern as bag → Thanh Toán: click immediately (label/el), then wait for next step
     shipping_ok = False
     t_ship_phase = time.perf_counter()
     for attempt in range(3):
@@ -4507,7 +4491,6 @@ def advance_checkout_to_payment(
             continue
         try:
             # Apple keeps "Chúng tôi giao hàng..." on screen ~10s after Continue.
-            # Heartbeat so that idle hop is visible (not a hang).
             _wait_js_heartbeat(
                 page,
                 """() => {
@@ -4536,6 +4519,63 @@ def advance_checkout_to_payment(
         )
     timer.since(t_ship_phase, "13b wait Shipping page + form", kind="wait")
     log(f"Shipping at: {page.url} (_s={_checkout_step(page)})")
+
+
+def advance_checkout_to_payment(
+    page,
+    timer: StageTimer | None = None,
+    *,
+    login_timeout_sec: int = 300,
+    checkout_cfg: dict | None = None,
+    until: str = "payment",
+) -> None:
+    """
+    Apple VN path (dry-run stop at payment):
+      Fulfillment (HCM + Bình Thạnh) → Shipping (matching saved address, else new)
+      → Billing (saved card)
+    Never clicks review / Đặt hàng.
+
+    until:
+      shipping — stop after the address is on the account (used by --warm-only)
+      payment  — continue to saved card + CVV
+    """
+    timer = timer or StageTimer()
+    checkout_cfg = checkout_cfg or {}
+    loc_city = checkout_cfg.get("location_city") or "Thành phố Hồ Chí Minh"
+    loc_district = checkout_cfg.get("location_district") or "Quận Bình Thạnh"
+    # shipping_address = delivery; billing_address = card. Legacy: address = shipping.
+    ship_addr = checkout_cfg.get("shipping_address") or checkout_cfg.get("address") or {}
+    if not isinstance(ship_addr, dict):
+        ship_addr = {}
+    bill_addr = checkout_cfg.get("billing_address") or ship_addr
+    if not isinstance(bill_addr, dict):
+        bill_addr = ship_addr
+    contact = checkout_cfg.get("contact") or {}
+    if not isinstance(contact, dict):
+        contact = {}
+
+    t_sso = time.perf_counter()
+    wait_checkout_signin_if_needed(page, login_timeout_sec)
+    timer.since(t_sso, "10b checkout SSO ready", kind="wait")
+
+    already_shipping = False
+    try:
+        already_shipping = bool(
+            page.evaluate(
+                """() => {
+                  const u = location.href || '';
+                  return u.includes('Shipping') || u.includes('_s=Shipping');
+                }"""
+            )
+        )
+    except Exception:  # noqa: BLE001
+        already_shipping = False
+
+    # ===== Fulfillment =====
+    if already_shipping:
+        log("Already on Shipping — skip fulfillment location")
+    else:
+        _advance_fulfillment_to_shipping(page, timer, loc_city, loc_district)
     _prefind_automs(
         page,
         {
@@ -4649,6 +4689,12 @@ def advance_checkout_to_payment(
         )
     timer.since(t_bill_phase, "17 wait billing + payment options", kind="wait")
     log(f"Billing at: {page.url} (_s={_checkout_step(page)})")
+    if (until or "payment").strip().lower() == "shipping":
+        log(
+            "Delivery address is in place — stopping before payment "
+            "(card is yours; we do not type it)"
+        )
+        return
     _prefind_automs(
         page,
         {
@@ -4977,6 +5023,9 @@ def main(argv: list[str] | None = None) -> int:
                     "Warming account + checkout SSO NOW (before timed sprint / T-0)…"
                 )
                 try:
+                    checkout_cfg = (
+                        cfg.get("checkout") if isinstance(cfg.get("checkout"), dict) else {}
+                    )
                     warm_checkout_sso(
                         page,
                         product_url=warm_product_url,
@@ -4984,6 +5033,7 @@ def main(argv: list[str] | None = None) -> int:
                         no_care=no_care,
                         login_timeout_sec=args.login_timeout_sec,
                         timeout_ms=args.timeout_ms,
+                        checkout_cfg=checkout_cfg,
                     )
                 except Exception as warm_exc:  # noqa: BLE001
                     if args.warm_only or args.setup_login:
@@ -4992,12 +5042,12 @@ def main(argv: list[str] | None = None) -> int:
 
             if args.setup_login or args.warm_only:
                 log(
-                    "WARM DONE (SSO warm + bag emptied). Leave Chrome open. "
-                    "At T-0:  python assist.py"
+                    "WARM DONE (SSO + delivery address + bag emptied). "
+                    "Leave Chrome open. At T-0:  python assist.py"
                 )
                 notify_macos(
                     "Assist warm done",
-                    "SSO warm, bag empty. Leave Chrome open; run assist.py at T-0.",
+                    "Address saved, bag empty. Leave Chrome open; run assist.py at T-0.",
                 )
             else:
                 if not args.warmup_before_run:

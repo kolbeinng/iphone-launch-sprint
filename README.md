@@ -15,11 +15,13 @@ Một lần chạy khoảng một phút. Chỉ khoảng một giây là mình b�
 
 ## Trước khi bắt đầu
 
-Bạn cần ba thứ này. Lấy sẵn bây giờ, đừng đợi đêm mở bán.
+Bạn cần làm sẵn những việc này **trước**, đừng đợi đêm mở bán.
 
-1. **Tài khoản Apple** đã lưu thẻ và địa chỉ giao hàng, và **địa chỉ thanh toán của thẻ phải là Việt Nam**.
+1. **Tài khoản Apple** — đăng nhập, **lưu thẻ** (số thẻ, hạn dùng), và **địa chỉ giao hàng**. Địa chỉ thanh toán của thẻ phải là Việt Nam. Script không gõ số thẻ giúp bạn.
 2. **Điện thoại của bạn**, để nhận mã 2FA của Apple.
-3. **Mã CVV của thẻ** (3 số). Bạn gõ trên máy của mình. Nó không lên GitHub.
+3. **Mã CVV** (3 số) — điền vào `config.yaml` ở Bước 4. Phải có trước khi chạy. Nó không lên GitHub.
+
+`--warm-only` (Bước 5) là lúc bạn đăng nhập. Script sẽ điền **địa chỉ giao hàng** từ file. **Thẻ bạn tự lưu** trong tài khoản Apple — script không gõ số thẻ. CVV trong `config.yaml` được gõ lúc chạy thật.
 
 Chọn máy của bạn:
 
@@ -118,7 +120,7 @@ python3 assist.py --warm-only
 
 Một cửa sổ Chrome mở ra. **Đăng nhập Apple trong cửa sổ đó** và nhập mã 2FA trên điện thoại. Script đang đợi bạn — không phải bị treo.
 
-Sau đó nó thêm một iPhone thử, vào thanh toán, rồi **xóa túi** lại. Bình thường; chỉ để làm ấm phiên đăng nhập.
+Sau đó nó thêm một iPhone thử, vào thanh toán, **điền địa chỉ giao hàng** từ `config.yaml` (hoặc bấm địa chỉ đã lưu), rồi **xóa túi**. Đó là lúc địa chỉ có sẵn trên tài khoản. **Thẻ bạn tự thêm** trong tài khoản Apple nếu chưa có — script không gõ số thẻ. CVV trong file được gõ lúc chạy thật (`--now` / `--at-launch`).
 
 **Để cửa sổ Chrome đó mở. Đừng tắt.** Tắt là phải đăng nhập và 2FA lại từ đầu.
 
@@ -241,7 +243,7 @@ python assist.py --warm-only
 
 Một cửa sổ Chrome mở ra. **Đăng nhập Apple trong cửa sổ đó** và nhập mã 2FA trên điện thoại. Script đang đợi bạn — không phải bị treo.
 
-Sau đó nó thêm một iPhone thử, vào thanh toán, rồi **xóa túi** lại. Bình thường; chỉ để làm ấm phiên đăng nhập.
+Sau đó nó thêm một iPhone thử, vào thanh toán, **điền địa chỉ giao hàng** từ `config.yaml` (hoặc bấm địa chỉ đã lưu), rồi **xóa túi**. Đó là lúc địa chỉ có sẵn trên tài khoản. **Thẻ bạn tự thêm** trong tài khoản Apple nếu chưa có — script không gõ số thẻ. CVV trong file được gõ lúc chạy thật (`--now` / `--at-launch`).
 
 **Để cửa sổ Chrome đó mở. Đừng đóng.** Đóng là phải đăng nhập và 2FA lại từ đầu.
 
@@ -327,11 +329,13 @@ A full run takes about a minute. Roughly one second of that is our clicking; the
 
 ## Before you start
 
-You need these three things. Get them now, not on launch night.
+Do these **beforehand**, not on launch night.
 
-1. **An Apple ID** with your card and shipping address already saved, and the card's **billing address set to Vietnam**.
+1. **An Apple ID** — sign in, **save your card** (number and expiry), and **save a shipping address**. The card's billing address must be Vietnam. The script never types the card number for you.
 2. **Your phone**, for the Apple 2FA code.
-3. **Your card's CVV** (the 3 digits). You type it on your own computer. It never goes to GitHub.
+3. **Your card's CVV** (the 3 digits) — put it in `config.yaml` in Step 4. It must be there before you run. It never goes to GitHub.
+
+`--warm-only` (Step 5) is when you sign in. The script puts the **delivery address** from the file onto your Apple account. **You save the card yourself** — the script never types the card number. The CVV in `config.yaml` is typed on the real run.
 
 Then pick your computer:
 
@@ -430,7 +434,7 @@ python3 assist.py --warm-only
 
 A Chrome window opens. **Sign in to Apple in that window** and finish the 2FA code from your phone. The script waits for you — it is not frozen.
 
-It then adds a test iPhone, goes to checkout, and **empties the bag** again. That is normal; it is only warming up your login.
+It then adds a test iPhone, goes to checkout, **puts the delivery address** from `config.yaml` on your Apple account (or clicks the saved one), and **empties the bag**. That is how the address is in place before launch. **You add the card yourself** in the Apple account if it is not there yet — the script never types the card number. The CVV in the file is typed on the real run (`--now` / `--at-launch`).
 
 **Leave that Chrome window open. Do not quit it.** Quitting it means signing in and doing 2FA all over again.
 
@@ -553,7 +557,7 @@ python assist.py --warm-only
 
 A Chrome window opens. **Sign in to Apple in that window** and finish the 2FA code from your phone. The script waits for you — it is not frozen.
 
-It then adds a test iPhone, goes to checkout, and **empties the bag** again. That is normal; it is only warming up your login.
+It then adds a test iPhone, goes to checkout, **puts the delivery address** from `config.yaml` on your Apple account (or clicks the saved one), and **empties the bag**. That is how the address is in place before launch. **You add the card yourself** in the Apple account if it is not there yet — the script never types the card number. The CVV in the file is typed on the real run (`--now` / `--at-launch`).
 
 **Leave that Chrome window open. Do not close it.** Closing it means signing in and doing 2FA all over again.
 
