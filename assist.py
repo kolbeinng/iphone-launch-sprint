@@ -206,8 +206,14 @@ _SNAP_CHECKOUT = """() => {
   const place = !!document.querySelector(
     '[data-autom="placeOrder"], [data-autom="place-order"], #rs-checkout-place-order-button'
   );
-  const dist = document.querySelector('select[data-autom="form-field-district"]');
-  const distN = dist ? dist.options.length : 0;
+  const allDist = Array.from(document.querySelectorAll(
+    'select[data-autom="form-field-district"]'
+  ));
+  const visSel = allDist.find((el) => {
+    const r = el.getBoundingClientRect();
+    return r.width > 2 && r.height > 2;
+  }) || allDist[allDist.length - 1] || allDist[0];
+  const distN = visSel ? visSel.options.length : 0;
   const vis = (el) => {
     if (!el) return false;
     const r = el.getBoundingClientRect();
@@ -2960,27 +2966,69 @@ def _clear_billing_postal(page) -> None:
     log(f"FILL  billing Mã Bưu Điện cleared (was={before!r} now={after!r})")
 
 
-def _billing_select_current(page, autom: str) -> str:
+# Prefer the address-form <select> Apple is showing, not a leftover shipping one.
+_PICK_SELECT_INFO_JS = """(autom) => {
+  const vis = (el) => {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 2 && r.height < 2) return false;
+    const st = window.getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden') return false;
+    return true;
+  };
+  const all = Array.from(document.querySelectorAll(
+    'select[data-autom="' + autom + '"]'
+  ));
+  const dlg = document.querySelector(
+    '[role="dialog"][aria-modal="true"], .rc-overlay-popup'
+  );
+  const dlgVis = !!(dlg && vis(dlg));
+  const pool = dlgVis
+    ? Array.from(dlg.querySelectorAll('select[data-autom="' + autom + '"]'))
+    : all;
+  const sel = pool.find(vis) || pool[pool.length - 1]
+    || all.find(vis) || all[all.length - 1] || null;
+  if (!sel) return { label: '', n: 0, idx: -1 };
+  const opt = sel.options[sel.selectedIndex];
+  return {
+    label: ((opt && opt.textContent) || sel.value || '').trim(),
+    n: sel.options.length,
+    idx: all.indexOf(sel),
+  };
+}"""
+
+
+def _pick_select_info(page, autom: str) -> dict:
     try:
-        return (
-            page.evaluate(
-                """(autom) => {
-                  const dlg = document.querySelector(
-                    '[role="dialog"][aria-modal="true"], .rc-overlay-popup'
-                  );
-                  const s = (dlg || document).querySelector(
-                    'select[data-autom="' + autom + '"]'
-                  );
-                  if (!s) return '';
-                  const opt = s.options[s.selectedIndex];
-                  return ((opt && opt.textContent) || s.value || '').trim();
-                }""",
-                autom,
-            )
-            or ""
-        )
+        return page.evaluate(_PICK_SELECT_INFO_JS, autom) or {}
     except Exception:  # noqa: BLE001
-        return ""
+        return {}
+
+
+def _vn_select_already_set(current: str, want: str) -> bool:
+    """True when the selected OPTION already is the value we want.
+
+    Do not treat the leftover 'Trước Sáp Nhập' placeholder option as a match,
+    and do not re-select just because that placeholder exists in the list.
+    Re-selecting a tỉnh that is already set resets quận/phường (~10s each).
+    """
+    cur = (current or "").strip()
+    w = (want or "").strip()
+    if not w or not cur:
+        return False
+    cur_l = cur.lower()
+    w_l = w.lower()
+    if re.search(r"trước\s*sáp", cur_l) and w_l not in cur_l:
+        return False
+    if re.fullmatch(
+        r"(tỉnh/thành phố|quận/huyện|phường)\s*trước\s*sáp\s*nhập", cur_l
+    ):
+        return False
+    return w_l in cur_l
+
+
+def _billing_select_current(page, autom: str) -> str:
+    return str((_pick_select_info(page, autom) or {}).get("label") or "").strip()
 
 
 def _select_billing_cascade(
@@ -3222,27 +3270,44 @@ def _sync_billing_address_from_checkout(
             pass
         log(f"Filled billing {label} ({(time.perf_counter() - t_f) * 1000:.0f}ms)")
 
-    # --- cascade: SAME helpers as shipping (_select_option_native / by_label) ---
-    has_state = page.locator('select[data-autom="form-field-state"]').count() > 0
-    has_city = page.locator('select[data-autom="form-field-city"]').count() > 0
-    t_state = time.perf_counter()
-    cur_state = _select_current_label(page, "form-field-state") if has_state else ""
-    if not has_state:
-        log("No billing state/tỉnh select — skip")
-    elif (
-        state.lower() not in (cur_state or "").lower()
-        or "trước sáp" in (cur_state or "").lower()
-    ):
-        if not _select_option_native(page, "form-field-state", state, wait_sec=8.0):
-            if not _select_option_by_label(page, "form-field-state", state, wait_sec=4.0):
-                raise RuntimeError(f"Billing state/tỉnh select failed: {state!r}")
-        log(f"Selected billing state: {state}")
-    else:
-        log(f"Billing state already set: {cur_state}")
-    if timer:
-        timer.since(t_state, "18b1 select state/tỉnh", kind="fill")
+    def _skip_or_select(autom: str, want: str, pretty: str, *, wait_sec: float = 4.0) -> bool:
+        """Leave quận/phường alone when the visible select already matches.
 
-    # Fill text while Apple loads quận options (don't sit idle on Selectstate)
+        Returns True if we changed the select (caller should give the next
+        cascade field more time). Returns False if we skipped.
+        """
+        t_sel = time.perf_counter()
+        info = _pick_select_info(page, autom)
+        if int(info.get("idx") or -1) < 0 and page.locator(
+            f'select[data-autom="{autom}"]'
+        ).count() == 0:
+            log(f"No billing {pretty} select — skip")
+            return False
+        cur = str(info.get("label") or "").strip()
+        if _vn_select_already_set(cur, want):
+            log(f"Billing {pretty} already set: {cur}")
+            if timer:
+                timer.since(t_sel, f"18b {pretty} already set (skip)", kind="fill")
+            return False
+        ok = _select_billing_cascade(page, autom, want, wait_sec=wait_sec)
+        if not ok:
+            ok = _select_option_native(
+                page, autom, want, wait_sec=wait_sec, prefer_visible=True
+            )
+        if not ok:
+            ok = _select_option_by_label(
+                page, autom, want, wait_sec=wait_sec, prefer_visible=True
+            )
+        if not ok:
+            raise RuntimeError(f"Billing {pretty} select failed: {want!r} (was {cur!r})")
+        log(f"Selected billing {pretty}: {want}")
+        if timer:
+            timer.since(t_sel, f"18b select {pretty}", kind="fill")
+        return True
+
+    # Text first — then skip dropdowns that Apple already filled (do NOT
+    # re-select tỉnh just because a leftover 'Trước Sáp Nhập' option exists;
+    # that resets quận/phường and costs ~10s each).
     _fill_one("form-field-firstName", first_name, "firstName")
     _fill_one("form-field-lastName", last_name, "lastName")
     _fill_one("form-field-street", street, "street")
@@ -3256,101 +3321,22 @@ def _sync_billing_address_from_checkout(
         except Exception:  # noqa: BLE001
             log("FILL  billing postal clear skipped (no popup field)")
 
-    t_city = time.perf_counter()
-    cur_city = _select_current_label(page, "form-field-city") if has_city else ""
-    if not has_city:
-        log("No billing city/quận select — skip")
-    elif (
-        city.lower() not in (cur_city or "").lower()
-        or "trước sáp" in (cur_city or "").lower()
-        or not (cur_city or "").strip()
-    ):
-        if not _select_option_native(page, "form-field-city", city, wait_sec=12.0):
-            if not _select_option_by_label(page, "form-field-city", city, wait_sec=4.0):
-                raise RuntimeError(f"Billing city/quận select failed: {city!r}")
-        log(f"Selected billing city/quận: {city}")
-    else:
-        log(f"Billing city already set: {cur_city}")
-    if timer:
-        timer.since(t_city, "18b2 select city/quận", kind="fill")
-
+    state_changed = _skip_or_select(
+        "form-field-state", state, "state/tỉnh", wait_sec=4.0
+    )
+    city_changed = _skip_or_select(
+        "form-field-city",
+        city,
+        "city/quận",
+        wait_sec=12.0 if state_changed else 4.0,
+    )
     if district:
-        has_district = (
-            page.locator('select[data-autom="form-field-district"]').count() > 0
+        _skip_or_select(
+            "form-field-district",
+            district,
+            "phường",
+            wait_sec=12.0 if city_changed else 4.0,
         )
-        if not has_district:
-            log("No billing phường select — skip")
-        else:
-            t_d = time.perf_counter()
-            cur_d = _select_current_label(page, "form-field-district")
-            if district.lower() not in (cur_d or "").lower():
-                try:
-                    _wait_js_heartbeat(
-                        page,
-                        """(want) => {
-                          const vis = (el) => {
-                            if (!el) return false;
-                            const r = el.getBoundingClientRect();
-                            return r.width > 2 && r.height > 2;
-                          };
-                          const dlg = document.querySelector(
-                            '[role="dialog"][aria-modal="true"], .rc-overlay-popup'
-                          );
-                          const root = (dlg && vis(dlg)) ? dlg : document;
-                          const sels = Array.from(root.querySelectorAll(
-                            'select[data-autom="form-field-district"]'
-                          ));
-                          const sel = sels.find(vis) || sels[sels.length - 1];
-                          if (!sel || sel.disabled) return false;
-                          const w = String(want || '').toLowerCase();
-                          return Array.from(sel.options).some((o) => {
-                            const t = (o.textContent || '').trim().toLowerCase();
-                            return t && (t === w || t.includes(w));
-                          });
-                        }""",
-                        arg=district,
-                        label="billing phường options after quận",
-                        timeout_ms=8_000,
-                        snapshot_js=_SNAP_CHECKOUT,
-                    )
-                except Exception as wait_exc:  # noqa: BLE001
-                    log(f"WAIT  billing phường options: {wait_exc}")
-                picked = False
-                if popup_open:
-                    picked = _select_billing_cascade(
-                        page, "form-field-district", district, wait_sec=4.0
-                    )
-                if not picked and not _select_option_by_label(
-                    page, "form-field-district", district, wait_sec=4.0
-                ):
-                    if not _select_option_native(
-                        page, "form-field-district", district, wait_sec=4.0
-                    ):
-                        opts = page.evaluate(
-                            """() => {
-                              const s = document.querySelector(
-                                'select[data-autom="form-field-district"]'
-                              );
-                              return s
-                                ? Array.from(s.options).map(
-                                    (o) => (o.textContent || '').trim()
-                                  )
-                                : [];
-                            }"""
-                        )
-                        raise RuntimeError(
-                            f"Billing phường select failed: {district!r}; "
-                            f"options={opts!r}"
-                        )
-                log(f"Selected billing phường: {district}")
-            else:
-                _select_option_by_label(
-                    page, "form-field-district", district, wait_sec=2.0
-                )
-                log(f"Billing phường confirmed: {district}")
-            log(f"Phường step done ({(time.perf_counter() - t_d) * 1000:.0f}ms)")
-            if timer:
-                timer.since(t_d, "18b4 phường", kind="fill")
 
     # Save if Apple put a Lưu button (popup). Inline payment-page fields have none.
     t_save = time.perf_counter()
@@ -3966,7 +3952,13 @@ def _match_select_option_label(texts: list[str], label: str) -> str | None:
 
 
 def _select_option_by_label(
-    page, autom: str, label: str, *, wait_sec: float = 12.0, poll_ms: int = 50
+    page,
+    autom: str,
+    label: str,
+    *,
+    wait_sec: float = 12.0,
+    poll_ms: int = 50,
+    prefer_visible: bool = False,
 ) -> bool:
     """Select a <select data-autom=...> option by visible label.
 
@@ -3975,7 +3967,18 @@ def _select_option_by_label(
     """
     if not label:
         return False
-    sel = page.locator(f'select[data-autom="{autom}"]').first
+
+    def _loc():
+        loc = page.locator(f'select[data-autom="{autom}"]')
+        if prefer_visible:
+            idx = int((_pick_select_info(page, autom) or {}).get("idx") or -1)
+            if idx >= 0:
+                return loc.nth(idx)
+            if loc.count() > 0:
+                return loc.last
+        return loc.first
+
+    sel = _loc()
     try:
         sel.wait_for(state="attached", timeout=5_000)
     except Exception:  # noqa: BLE001
@@ -3985,7 +3988,7 @@ def _select_option_by_label(
     while time.time() < deadline:
         try:
             # Re-query each attempt — Apple remounts selects after cascade changes
-            sel = page.locator(f'select[data-autom="{autom}"]').first
+            sel = _loc()
             sel.wait_for(state="attached", timeout=1_000)
             texts = sel.locator("option").all_text_contents()
         except Exception:  # noqa: BLE001
@@ -4005,15 +4008,19 @@ def _select_option_by_label(
                 continue
         # Confirm value stuck (React sometimes ignores a flaky select)
         try:
-            current = page.evaluate(
-                """(autom) => {
-                  const s = document.querySelector('select[data-autom="' + autom + '"]');
-                  if (!s) return '';
-                  const opt = s.options[s.selectedIndex];
-                  return ((opt && opt.textContent) || s.value || '').trim();
-                }""",
-                autom,
-            )
+            current = (_pick_select_info(page, autom) if prefer_visible else None)
+            if current is not None:
+                current = current.get("label") or ""
+            else:
+                current = page.evaluate(
+                    """(autom) => {
+                      const s = document.querySelector('select[data-autom="' + autom + '"]');
+                      if (!s) return '';
+                      const opt = s.options[s.selectedIndex];
+                      return ((opt && opt.textContent) || s.value || '').trim();
+                    }""",
+                    autom,
+                )
         except Exception:  # noqa: BLE001
             current = ""
         cur_l = (current or "").lower()
@@ -4082,7 +4089,14 @@ def _fill_fields_native(page, mapping: dict[str, str]) -> dict[str, str]:
     )
 
 
-def _select_option_native(page, autom: str, label: str, *, wait_sec: float = 12.0) -> bool:
+def _select_option_native(
+    page,
+    autom: str,
+    label: str,
+    *,
+    wait_sec: float = 12.0,
+    prefer_visible: bool = False,
+) -> bool:
     """Select option in-page (native setter). Falls back to Playwright select_option."""
     if not label:
         return False
@@ -4090,9 +4104,13 @@ def _select_option_native(page, autom: str, label: str, *, wait_sec: float = 12.
     deadline = time.time() + wait_sec
     saw_option = False
     while time.time() < deadline:
+        idx = -1
+        if prefer_visible:
+            idx = int((_pick_select_info(page, autom) or {}).get("idx") or -1)
         status = page.evaluate(
-            """({ autom, label }) => {
-              const sel = document.querySelector('select[data-autom="' + autom + '"]');
+            """({ autom, label, idx }) => {
+              const all = document.querySelectorAll('select[data-autom="' + autom + '"]');
+              const sel = (idx >= 0 && all[idx]) ? all[idx] : all[0];
               if (!sel) return { ok: false, found: false };
               const want = String(label).trim().toLowerCase();
               const opts = Array.from(sel.options);
@@ -4121,18 +4139,32 @@ def _select_option_native(page, autom: str, label: str, *, wait_sec: float = 12.
               const hitT = (hit.textContent || '').trim().toLowerCase();
               return { ok: cur === hitT || cur.includes(want) || cur === String(hit.value).toLowerCase(), found: true };
             }""",
-            {"autom": autom, "label": want},
+            {"autom": autom, "label": want, "idx": idx},
         ) or {}
         if status.get("ok"):
             return True
         if status.get("found"):
             saw_option = True
             # Option exists but React ignored native setter — Playwright once
-            if _select_option_by_label(page, autom, want, wait_sec=1.5, poll_ms=40):
+            if _select_option_by_label(
+                page,
+                autom,
+                want,
+                wait_sec=1.5,
+                poll_ms=40,
+                prefer_visible=prefer_visible,
+            ):
                 return True
         page.wait_for_timeout(40)
     if saw_option:
-        return _select_option_by_label(page, autom, want, wait_sec=2.0, poll_ms=40)
+        return _select_option_by_label(
+            page,
+            autom,
+            want,
+            wait_sec=2.0,
+            poll_ms=40,
+            prefer_visible=prefer_visible,
+        )
     return False
 
 
