@@ -2809,7 +2809,7 @@ def _open_billing_address_edit(page) -> None:
                   if (!el || el.disabled) return false;
                   return !!(el.offsetParent || el.getClientRects().length);
                 }""",
-                timeout=8_000,
+                timeout=3_000,
             )
         except Exception as wait_exc:  # noqa: BLE001
             last_err = wait_exc
@@ -2848,26 +2848,11 @@ def _open_billing_address_edit(page) -> None:
             continue
         log(f"CLICK  billing Chỉnh sửa via={clicked} attempt={attempt}")
         try:
-            # Wait for the POPUP (not background form scraps)
             page.wait_for_function(
-                """() => {
-                  const dlg = document.querySelector(
-                    '[role="dialog"][aria-modal="true"], .rc-overlay-popup'
-                  );
-                  if (!dlg) return false;
-                  const vis = !!(dlg.offsetParent || dlg.getClientRects().length);
-                  if (!vis) return false;
-                  const title = (dlg.innerText || '').toLowerCase();
-                  const titled = title.includes('chỉnh sửa địa chỉ')
-                    || title.includes('edit address')
-                    || !!dlg.querySelector('#rf-creditcard-addressoverlay-subheader');
-                  return titled && !!dlg.querySelector(
-                    '[data-autom="address-savebutton"], select[data-autom="form-field-state"]'
-                  );
-                }""",
-                timeout=20_000,
+                _BILLING_PROMPT_JS,
+                timeout=8_000,
             )
-            log("WAIT  Chỉnh Sửa Địa Chỉ popup open")
+            log("WAIT  Chỉnh Sửa Địa Chỉ editor open")
             return
         except Exception as open_exc:  # noqa: BLE001
             last_err = open_exc
@@ -2908,9 +2893,16 @@ def _clear_input_autom(page, autom: str) -> None:
 
 
 def _billing_select(page, autom: str):
-    """Select inside the Chỉnh Sửa Địa Chỉ popup only."""
+    """The address-form <select>, not a leftover shipping one."""
+    loc = page.locator(f'select[data-autom="{autom}"]')
+    idx = int((_pick_select_info(page, autom) or {}).get("idx") or -1)
+    if idx >= 0:
+        return loc.nth(idx)
     popup = _billing_popup(page)
-    return popup.locator(f'select[data-autom="{autom}"]').first
+    inner = popup.locator(f'select[data-autom="{autom}"]')
+    if inner.count() > 0:
+        return inner.last
+    return loc.last if loc.count() else loc.first
 
 
 def _fill_billing_input(page, autom: str, value: str) -> None:
@@ -2995,6 +2987,37 @@ _PICK_SELECT_INFO_JS = """(autom) => {
     n: sel.options.length,
     idx: all.indexOf(sel),
   };
+}"""
+
+
+_SELECT_HAS_WANT_JS = """(args) => {
+  const autom = args.autom;
+  const want = String(args.want || '').trim().toLowerCase();
+  const vis = (el) => {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 2 && r.height < 2) return false;
+    const st = window.getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden') return false;
+    return true;
+  };
+  const all = Array.from(document.querySelectorAll(
+    'select[data-autom="' + autom + '"]'
+  ));
+  const dlg = document.querySelector(
+    '[role="dialog"][aria-modal="true"], .rc-overlay-popup'
+  );
+  const dlgVis = !!(dlg && vis(dlg));
+  const pool = dlgVis
+    ? Array.from(dlg.querySelectorAll('select[data-autom="' + autom + '"]'))
+    : all;
+  const sel = pool.find(vis) || pool[pool.length - 1]
+    || all.find(vis) || all[all.length - 1] || null;
+  if (!sel || sel.disabled || !want) return false;
+  return Array.from(sel.options).some((o) => {
+    const t = (o.textContent || '').trim().toLowerCase();
+    return t && (t === want || t.includes(want));
+  });
 }"""
 
 
@@ -3203,6 +3226,91 @@ def _billing_address_already_ok(page, addr: dict) -> bool:
     return False
 
 
+def _billing_card_incomplete(page, addr: dict) -> bool:
+    """True when the saved card will fail review (empty/non-VN billing).
+
+    Used to open Chỉnh sửa *before* the 9s failed-review hop. Must stay false
+    when the card already shows a Vietnam address (Mac path).
+    """
+    if _billing_prompt_visible(page):
+        return True
+    try:
+        info = page.evaluate(
+            """() => {
+              const vis = (el) => {
+                if (!el) return false;
+                const r = el.getBoundingClientRect();
+                if (r.width < 2 || r.height < 2) return false;
+                return !!(el.offsetParent || el.getClientRects().length);
+              };
+              const emptyStreet = Array.from(document.querySelectorAll(
+                'input[data-autom="form-field-street"]'
+              )).some((el) => vis(el) && !(el.value || '').trim());
+              const root = document.querySelector(
+                '.rf-creditcard-address, .rf-creditcard-savedcard-address, '
+                + '.rf-creditcard-carddetails'
+              );
+              const blob = ((root && vis(root) ? root.innerText : '') || '')
+                .replace(/\\s+/g, ' ').trim();
+              return { emptyStreet, blob: blob.slice(0, 300) };
+            }"""
+        ) or {}
+    except Exception:  # noqa: BLE001
+        return False
+    if info.get("emptyStreet"):
+        return True
+    blob = str(info.get("blob") or "").lower()
+    if not blob:
+        return False
+    street = ((addr or {}).get("street") or "").strip().lower()
+    if street and street[:16] in blob:
+        return False
+    if re.search(r"hồ chí minh|ho chi minh|bình thạnh|binh thanh", blob):
+        return False
+    # Card panel text has no VN city — Apple will pop the editor after review.
+    return True
+
+
+def _click_billing_same_as_shipping(page) -> bool:
+    """Check 'use shipping as billing' if Apple offers it (skips the 20s cascade)."""
+    try:
+        hit = page.evaluate(
+            """() => {
+              const vis = (el) => {
+                if (!el) return false;
+                const r = el.getBoundingClientRect();
+                return r.width > 4 && r.height > 4;
+              };
+              const nodes = Array.from(document.querySelectorAll(
+                'input[type="checkbox"], [role="checkbox"], label, button'
+              ));
+              const hit = nodes.find((el) => {
+                if (!vis(el)) return false;
+                const t = (
+                  (el.innerText || '') + ' '
+                  + (el.getAttribute('aria-label') || '') + ' '
+                  + (el.getAttribute('data-autom') || '') + ' '
+                  + (el.id || '')
+                ).toLowerCase();
+                return /sameasshipping|same-as-shipping|useShippingAddress/i.test(t)
+                  || /giống địa chỉ giao|dùng địa chỉ giao hàng|same as shipping/i.test(t);
+              });
+              if (!hit) return '';
+              const box = hit.matches('input') ? hit
+                : hit.querySelector('input[type="checkbox"]') || hit;
+              if (box && box.checked) return 'already';
+              hit.click();
+              return (hit.getAttribute('data-autom') || hit.id || hit.tagName || 'yes');
+            }"""
+        )
+    except Exception:  # noqa: BLE001
+        return False
+    if not hit:
+        return False
+    log(f"CLICK  billing same-as-shipping via={hit}")
+    return True
+
+
 def _sync_billing_address_from_checkout(
     page,
     addr: dict,
@@ -3243,6 +3351,9 @@ def _sync_billing_address_from_checkout(
         except Exception:  # noqa: BLE001
             pass
         log("FILL  billing popup — same method as shipping (native/by_label)")
+        if _click_billing_same_as_shipping(page):
+            page.wait_for_timeout(400)
+            # Shipping copy often sets tỉnh/quận/phường — skip the 10s cascade.
     else:
         popup = page
         log("FILL  billing address on the payment page (no popup)")
@@ -3289,15 +3400,28 @@ def _sync_billing_address_from_checkout(
             if timer:
                 timer.since(t_sel, f"18b {pretty} already set (skip)", kind="fill")
             return False
-        ok = _select_billing_cascade(page, autom, want, wait_sec=wait_sec)
+        # One wait for Apple's cascade, then one select — do not stack
+        # cascade + native + by_label each with the same 12s budget.
+        try:
+            _wait_js_heartbeat(
+                page,
+                _SELECT_HAS_WANT_JS,
+                arg={"autom": autom, "want": want},
+                label=f"billing {pretty} options",
+                timeout_ms=max(800, int(wait_sec * 1000)),
+                snapshot_js=_SNAP_CHECKOUT,
+            )
+        except Exception as wait_exc:  # noqa: BLE001
+            log(f"WAIT  billing {pretty} options: {wait_exc}")
+        ok = _select_option_by_label(
+            page, autom, want, wait_sec=2.0, prefer_visible=True
+        )
         if not ok:
             ok = _select_option_native(
-                page, autom, want, wait_sec=wait_sec, prefer_visible=True
+                page, autom, want, wait_sec=2.0, prefer_visible=True
             )
         if not ok:
-            ok = _select_option_by_label(
-                page, autom, want, wait_sec=wait_sec, prefer_visible=True
-            )
+            ok = _select_billing_cascade(page, autom, want, wait_sec=2.0)
         if not ok:
             raise RuntimeError(f"Billing {pretty} select failed: {want!r} (was {cur!r})")
         log(f"Selected billing {pretty}: {want}")
@@ -5158,6 +5282,14 @@ def advance_checkout_to_payment(
             "(set sync_billing_address: true to fill it from config when Apple asks)"
         )
     prompt = _billing_prompt_visible(page)
+    incomplete = bool(sync_billing) and _billing_card_incomplete(page, bill_addr)
+    if sync_billing and not prompt and incomplete and not force_billing:
+        log("Billing card address incomplete — opening editor before review")
+        try:
+            _open_billing_address_edit(page)
+            prompt = _billing_prompt_visible(page)
+        except Exception as open_exc:  # noqa: BLE001
+            log(f"Could not open billing editor early: {open_exc}")
     if sync_billing and not prompt and not force_billing:
         log("No billing address prompt — skipping fill")
     if sync_billing and (prompt or force_billing):
