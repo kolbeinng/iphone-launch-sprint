@@ -17,7 +17,7 @@ Một lần chạy khoảng một phút. Chỉ khoảng một giây là mình b�
 
 Bạn đã clone lần trước. **Đừng cài lại từ đầu.** Làm đúng các bước này.
 
-Chạy `--at-launch`: script đợi tới 19:00, làm mới trang đến khi hết logo Apple, và **đợi bạn đăng nhập / 2FA** nếu Apple hỏi.
+Chạy `--at-launch`: script đợi tới 19:00, làm mới trang đến khi hết logo Apple (tối đa `locked_refresh_timeout_sec`, mặc định 30 phút), và **đợi bạn đăng nhập / 2FA** nếu Apple hỏi.
 
 ### Mac
 
@@ -35,6 +35,7 @@ Trong file, sửa rồi lưu (⌘S):
 - **`cvv`:** 3 số trên thẻ
 - **`checkout.quantity`:** số máy (`1` hoặc `2` — Apple hay giới hạn 2)
 - **`storages`** trong khối `launch:`: dung lượng, ví dụ `["256GB", "256"]` hoặc `["512GB", "512"]` (Duo còn `1TB`, `2TB`)
+- **`locked_refresh_timeout_sec`:** bao lâu script làm mới trang khi còn logo (mặc định `1800` = 30 phút)
 
 ```bash
 python3 assist.py --at-launch
@@ -56,6 +57,7 @@ Trong file, sửa rồi Save:
 - **`cvv`:** 3 số trên thẻ
 - **`checkout.quantity`:** số máy (`1` hoặc `2` — Apple hay giới hạn 2)
 - **`storages`** trong khối `launch:`: dung lượng, ví dụ `["256GB", "256"]` hoặc `["512GB", "512"]` (Duo còn `1TB`, `2TB`)
+- **`locked_refresh_timeout_sec`:** bao lâu script làm mới trang khi còn logo (mặc định `1800` = 30 phút)
 
 ```powershell
 python assist.py --at-launch
@@ -196,7 +198,7 @@ Thứ Sáu **16 tháng 10 năm 2026 lúc 19:00** giờ Việt Nam (iPhone Duo). 
 **Gợi ý:** ngồi vào lúc **18:45**. Cắm sạc laptop. Điện thoại trong tay. Tắt Không làm phiền. Cùng máy bạn đã luyện tập.
 
 1. `git pull`, rồi `cp config.example.yaml config.yaml` và mở file (xem [Đã tải script rồi](#đã-tải-script-rồi--đêm-iphone-duo-16-tháng-10-1900-vn)).
-2. Điền **`cvv`**, đổi **`mode: launch`**, chọn **`checkout.quantity`** và **`storages`** trong khối `launch:`. Lưu.
+2. Điền **`cvv`**, đổi **`mode: launch`**, chọn **`checkout.quantity`**, **`storages`**, và **`locked_refresh_timeout_sec`** (`1800` = 30 phút làm mới khi còn logo). Lưu.
 3. Mở Terminal, dán hai dòng ở **Mở Terminal lần sau**. Đợi `(.venv)`.
 4. Chạy và **sẵn sàng đăng nhập / 2FA** trong Chrome nếu Apple hỏi:
 
@@ -304,7 +306,7 @@ Thứ Sáu **16 tháng 10 năm 2026 lúc 19:00** giờ Việt Nam (iPhone Duo). 
 **Gợi ý:** ngồi vào lúc **18:45**. Cắm sạc laptop. Điện thoại trong tay. Tắt Không làm phiền. Cùng máy bạn đã luyện tập.
 
 1. `git pull`, rồi `copy config.example.yaml config.yaml` và mở file (xem [Đã tải script rồi](#đã-tải-script-rồi--đêm-iphone-duo-16-tháng-10-1900-vn)).
-2. Điền **`cvv`**, đổi **`mode: launch`**, chọn **`checkout.quantity`** và **`storages`** trong khối `launch:`. Save.
+2. Điền **`cvv`**, đổi **`mode: launch`**, chọn **`checkout.quantity`**, **`storages`**, và **`locked_refresh_timeout_sec`** (`1800` = 30 phút làm mới khi còn logo). Save.
 3. Mở PowerShell, dán hai dòng ở **Mở PowerShell lần sau**. Đợi `(.venv)`.
 4. Chạy và **sẵn sàng đăng nhập / 2FA** trong Chrome nếu Apple hỏi:
 
@@ -355,7 +357,7 @@ A full run takes about a minute. Roughly one second of that is our clicking; the
 
 You cloned this last time. **Do not install from scratch.** Do exactly this.
 
-Run `--at-launch`: it waits until 19:00, refreshes until the Apple logo goes away, and **waits for you to sign in / finish 2FA** if Apple asks.
+Run `--at-launch`: it waits until 19:00, refreshes until the Apple logo goes away (up to `locked_refresh_timeout_sec`, default 30 minutes), and **waits for you to sign in / finish 2FA** if Apple asks.
 
 ### Mac
 
@@ -373,6 +375,7 @@ In the file, change these then save (⌘S):
 - **`cvv`:** 3 digits on the card
 - **`checkout.quantity`:** how many phones (`1` or `2` — Apple often caps at 2)
 - **`storages`** under `launch:`: capacity, e.g. `["256GB", "256"]` or `["512GB", "512"]` (Duo also has `1TB`, `2TB`)
+- **`locked_refresh_timeout_sec`:** how long it keeps refreshing while the page is a logo (default `1800` = 30 minutes)
 
 ```bash
 python3 assist.py --at-launch
@@ -394,6 +397,7 @@ In the file, change these then Save:
 - **`cvv`:** 3 digits on the card
 - **`checkout.quantity`:** how many phones (`1` or `2` — Apple often caps at 2)
 - **`storages`** under `launch:`: capacity, e.g. `["256GB", "256"]` or `["512GB", "512"]` (Duo also has `1TB`, `2TB`)
+- **`locked_refresh_timeout_sec`:** how long it keeps refreshing while the page is a logo (default `1800` = 30 minutes)
 
 ```powershell
 python assist.py --at-launch
@@ -534,7 +538,7 @@ Friday **16 October 2026 at 19:00** Vietnam time (iPhone Duo). You do not try to
 **The suggestion:** sit down at **18:45**. Laptop plugged in. Phone in your hand. Do Not Disturb off. Same computer you practised on.
 
 1. `git pull`, then `cp config.example.yaml config.yaml` and open the file (see [Already have the script](#already-have-the-script--iphone-duo-night-16-oct-1900-vn)).
-2. Put **`cvv`** back in, set **`mode: launch`**, choose **`checkout.quantity`** and **`storages`** under `launch:`. Save.
+2. Put **`cvv`** back in, set **`mode: launch`**, choose **`checkout.quantity`**, **`storages`**, and **`locked_refresh_timeout_sec`** (`1800` = 30 minutes of refresh while the page is a logo). Save.
 3. Open Terminal and paste the two lines from **Opening Terminal again later**. Wait for `(.venv)`.
 4. Run it and **be ready to sign in / finish 2FA** in Chrome if Apple asks:
 
@@ -642,7 +646,7 @@ Friday **16 October 2026 at 19:00** Vietnam time (iPhone Duo). You do not try to
 **The suggestion:** sit down at **18:45**. Laptop plugged in. Phone in your hand. Do Not Disturb off. Same computer you practised on.
 
 1. `git pull`, then `copy config.example.yaml config.yaml` and open the file (see [Already have the script](#already-have-the-script--iphone-duo-night-16-oct-1900-vn)).
-2. Put **`cvv`** back in, set **`mode: launch`**, choose **`checkout.quantity`** and **`storages`** under `launch:`. Save.
+2. Put **`cvv`** back in, set **`mode: launch`**, choose **`checkout.quantity`**, **`storages`**, and **`locked_refresh_timeout_sec`** (`1800` = 30 minutes of refresh while the page is a logo). Save.
 3. Open PowerShell and paste the two lines from **Opening PowerShell again later**. Wait for `(.venv)`.
 4. Run it and **be ready to sign in / finish 2FA** in Chrome if Apple asks:
 
