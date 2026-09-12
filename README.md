@@ -6,10 +6,52 @@ Script luyện tập để mua iPhone trên **apple.com/vn**.
 
 Nó điền hết phần thanh toán rồi **dừng ở nút Đặt hàng**. Nó không bao giờ bấm nút đó. Bạn bấm. Phải để `dry_run: true`, không thì script không chạy.
 
-- **Luyện tập ngay:** iPhone 17 Pro Max · 256GB · Cam Vũ Trụ
-- **Đêm mở bán:** iPhone 18 Pro Max · 256GB · Burgundy — đổi một dòng trong `config.yaml` (`mode: launch`)
+- **Luyện tập ngay:** iPhone 18 Pro Max · 256GB · Burgundy (`mode: test`)
+- **Đêm mở bán:** iPhone Duo · 256GB · Trời Đêm — đổi `mode: launch` trong `config.yaml`
 
 Một lần chạy khoảng một phút. Chỉ khoảng một giây là mình bấm; phần còn lại là Apple đang tải trang.
+
+---
+
+## Đã tải script rồi — đêm iPhone Duo (16 tháng 10, 19:00 VN)
+
+Bạn đã clone lần trước. **Đừng cài lại từ đầu.** Làm đúng các bước này.
+
+**Không chạy `--warm-only`.** Trước giờ mở bán Apple chỉ hiện logo, trang mua bị khóa. Làm ấm sẽ lỗi. Chạy `--at-launch`: script đợi tới 19:00, làm mới trang đến khi hết logo, và **đợi bạn đăng nhập / 2FA** nếu Apple hỏi.
+
+### Mac
+
+```bash
+cd ~/Projects/iphone-launch-sprint
+source .venv/bin/activate
+git pull
+cp config.example.yaml config.yaml
+open -e config.yaml
+```
+
+Trong file: điền lại **`cvv`** (3 số trên thẻ), đổi **`mode: test`** thành **`mode: launch`**, lưu (⌘S).
+
+```bash
+python3 assist.py --at-launch
+```
+
+### Windows 11
+
+```powershell
+cd $env:USERPROFILE\Projects\iphone-launch-sprint
+.\.venv\Scripts\Activate.ps1
+git pull
+copy config.example.yaml config.yaml
+notepad config.yaml
+```
+
+Trong file: điền lại **`cvv`** (3 số trên thẻ), đổi **`mode: test`** thành **`mode: launch`**, Save.
+
+```powershell
+python assist.py --at-launch
+```
+
+Ngồi sớm (khoảng 18:45). Điện thoại trong tay cho mã 2FA. **Để cửa sổ Chrome mở.** Đừng tắt Chrome. Script đếm đến 19:00 rồi tự chạy. Khi tới Đặt hàng thì **bạn** bấm.
 
 ---
 
@@ -23,7 +65,9 @@ Bạn cần làm sẵn những việc này **trước**, đừng đợi đêm m�
 
 `--warm-only` (Bước 5) là lúc bạn đăng nhập. Script sẽ điền **địa chỉ giao hàng** từ file. **Thẻ bạn tự lưu** trong tài khoản Apple — script không gõ số thẻ. CVV trong `config.yaml` được gõ lúc chạy thật.
 
-Chọn máy của bạn:
+Đã clone lần trước? Làm [Đã tải script rồi](#đã-tải-script-rồi--đêm-iphone-duo-16-tháng-10-1900-vn) — `git pull`, copy config, `mode: launch`, `--at-launch`. Đừng cài lại.
+
+Chọn máy của bạn (cài lần đầu):
 
 - **[Mac](#cài-đặt-trên-mac)** — lệnh bắt đầu bằng `python3`
 - **[Windows 11](#cài-đặt-trên-windows-11)** — lệnh bắt đầu bằng `python`
@@ -147,19 +191,16 @@ source .venv/bin/activate
 
 ### Bước 7 — Đêm mở bán
 
-Thứ Bảy **12 tháng 9 năm 2026 lúc 19:00** giờ Việt Nam. Đừng tự bấm Return đúng 19:00. Bạn khởi động sớm, script sẽ đợi.
+Thứ Sáu **16 tháng 10 năm 2026 lúc 19:00** giờ Việt Nam (iPhone Duo). Đừng tự bấm Return đúng 19:00. Bạn khởi động sớm, script sẽ đợi.
 
 **Gợi ý:** ngồi vào lúc **18:45**. Cắm sạc laptop. Điện thoại trong tay. Tắt Không làm phiền. Cùng máy bạn đã luyện tập.
 
-1. Mở `config.yaml` và đổi **một chữ**: `mode: test` → `mode: launch`. Lưu.
-2. Mở Terminal, dán hai dòng ở **Mở Terminal lần sau**. Đợi `(.venv)`.
-3. Làm ấm đăng nhập. Đăng nhập và làm 2FA nếu Apple hỏi. **Để Chrome mở.**
+**Không chạy `--warm-only`.** Trang mua sẽ khóa (logo Apple) đến lúc mở bán. Làm ấm sẽ lỗi.
 
-```bash
-python3 assist.py --warm-only
-```
-
-4. Trong **cùng** cửa sổ Terminal, bắt đầu đợi:
+1. `git pull`, rồi `cp config.example.yaml config.yaml` và mở file (xem [Đã tải script rồi](#đã-tải-script-rồi--đêm-iphone-duo-16-tháng-10-1900-vn)).
+2. Điền **`cvv`**, đổi **`mode: test`** → **`mode: launch`**. Lưu.
+3. Mở Terminal, dán hai dòng ở **Mở Terminal lần sau**. Đợi `(.venv)`.
+4. Chạy và **sẵn sàng đăng nhập / 2FA** trong Chrome nếu Apple hỏi:
 
 ```bash
 python3 assist.py --at-launch
@@ -270,19 +311,16 @@ cd $env:USERPROFILE\Projects\iphone-launch-sprint
 
 ### Bước 7 — Đêm mở bán
 
-Thứ Bảy **12 tháng 9 năm 2026 lúc 19:00** giờ Việt Nam. Đừng tự bấm Enter đúng 19:00. Bạn khởi động sớm, script sẽ đợi.
+Thứ Sáu **16 tháng 10 năm 2026 lúc 19:00** giờ Việt Nam (iPhone Duo). Đừng tự bấm Enter đúng 19:00. Bạn khởi động sớm, script sẽ đợi.
 
 **Gợi ý:** ngồi vào lúc **18:45**. Cắm sạc laptop. Điện thoại trong tay. Tắt Không làm phiền. Cùng máy bạn đã luyện tập.
 
-1. Mở `config.yaml` và đổi **một chữ**: `mode: test` → `mode: launch`. Lưu.
-2. Mở PowerShell, dán hai dòng ở **Mở PowerShell lần sau**. Đợi `(.venv)`.
-3. Làm ấm đăng nhập. Đăng nhập và làm 2FA nếu Apple hỏi. **Để Chrome mở.**
+**Không chạy `--warm-only`.** Trang mua sẽ khóa (logo Apple) đến lúc mở bán. Làm ấm sẽ lỗi.
 
-```powershell
-python assist.py --warm-only
-```
-
-4. Trong **cùng** cửa sổ PowerShell, bắt đầu đợi:
+1. `git pull`, rồi `copy config.example.yaml config.yaml` và mở file (xem [Đã tải script rồi](#đã-tải-script-rồi--đêm-iphone-duo-16-tháng-10-1900-vn)).
+2. Điền **`cvv`**, đổi **`mode: test`** → **`mode: launch`**. Save.
+3. Mở PowerShell, dán hai dòng ở **Mở PowerShell lần sau**. Đợi `(.venv)`.
+4. Chạy và **sẵn sàng đăng nhập / 2FA** trong Chrome nếu Apple hỏi:
 
 ```powershell
 python assist.py --at-launch
@@ -305,7 +343,7 @@ Bạn có thể chạy `--at-launch` sớm năm, mười hoặc ba mươi phút.
 | `No module named 'yaml'` | Dòng lệnh thiếu `(.venv)`. Chạy hai dòng “mở lần sau” trước. |
 | `Invalid timezone: Asia/Ho_Chi_Minh` | Bản cũ. Trong thư mục project, đã có `(.venv)`: `python3 -m pip install -r requirements.txt` (Windows: `py -3 -m pip install -r requirements.txt`). |
 | `git: command not found` | Bước 1 chưa xong. Đợi, rồi mở Terminal hoặc PowerShell mới. |
-| Apple hỏi đăng nhập mỗi lần chạy | Chrome bị đóng. Chạy `--warm-only` lại và để mở. |
+| Apple hỏi đăng nhập mỗi lần chạy | Chrome bị đóng. Đêm mở bán: để `--at-launch` đợi bạn đăng nhập. Đừng chạy `--warm-only` (trang đang khóa). Luyện tập ngày thường mới dùng `--warm-only`. |
 | Như bị kẹt ở trang đăng nhập | Nó đang đợi bạn. Nhập mã 2FA trong cửa sổ Chrome đó. |
 | Không có gì xảy ra 10–20 giây | Đó là Apple đang tải trang. Đừng bấm gì. |
 | `USER PICK waiting for COLOR…` (hoặc SIZE, hoặc STORAGE) | Tự bấm ô đó trong Chrome, lần chạy sẽ tiếp tục. |
@@ -320,10 +358,52 @@ A practice script for buying an iPhone on **apple.com/vn**.
 
 It fills the whole checkout for you and then **stops at the Đặt hàng button**. It never clicks it. You do. `dry_run: true` is required and the script refuses to start without it.
 
-- **Practice now:** iPhone 17 Pro Max · 256GB · Cam Vũ Trụ
-- **Launch night:** iPhone 18 Pro Max · 256GB · Burgundy — one line in `config.yaml` (`mode: launch`)
+- **Practice now:** iPhone 18 Pro Max · 256GB · Burgundy (`mode: test`)
+- **Launch night:** iPhone Duo · 256GB · Night Sky — set `mode: launch` in `config.yaml`
 
 A full run takes about a minute. Roughly one second of that is our clicking; the rest is Apple's pages loading.
+
+---
+
+## Already have the script — iPhone Duo night (16 Oct, 19:00 VN)
+
+You cloned this last time. **Do not install from scratch.** Do exactly this.
+
+**Do not run `--warm-only`.** Before launch Apple only shows a logo and the buy page is locked. Warm will fail. Run `--at-launch`: it waits until 19:00, refreshes until the logo goes away, and **waits for you to sign in / finish 2FA** if Apple asks.
+
+### Mac
+
+```bash
+cd ~/Projects/iphone-launch-sprint
+source .venv/bin/activate
+git pull
+cp config.example.yaml config.yaml
+open -e config.yaml
+```
+
+In the file: put your **`cvv`** back in (3 digits on the card), change **`mode: test`** to **`mode: launch`**, save (⌘S).
+
+```bash
+python3 assist.py --at-launch
+```
+
+### Windows 11
+
+```powershell
+cd $env:USERPROFILE\Projects\iphone-launch-sprint
+.\.venv\Scripts\Activate.ps1
+git pull
+copy config.example.yaml config.yaml
+notepad config.yaml
+```
+
+In the file: put your **`cvv`** back in (3 digits on the card), change **`mode: test`** to **`mode: launch`**, Save.
+
+```powershell
+python assist.py --at-launch
+```
+
+Sit down early (around 18:45). Phone in hand for 2FA. **Leave Chrome open.** Do not quit Chrome. The script counts down to 19:00 and then runs. When it reaches Đặt hàng, **you** click it.
 
 ---
 
@@ -337,7 +417,9 @@ Do these **beforehand**, not on launch night.
 
 `--warm-only` (Step 5) is when you sign in. The script puts the **delivery address** from the file onto your Apple account. **You save the card yourself** — the script never types the card number. The CVV in `config.yaml` is typed on the real run.
 
-Then pick your computer:
+Already cloned last time? Use [Already have the script](#already-have-the-script--iphone-duo-night-16-oct-1900-vn) — `git pull`, copy config, `mode: launch`, `--at-launch`. Do not install again.
+
+Then pick your computer (first-time install):
 
 - **[Mac](#mac-setup)** — commands start with `python3`
 - **[Windows 11](#windows-11-setup)** — commands start with `python`
@@ -461,19 +543,16 @@ Wait for `(.venv)`, then you can run the next command.
 
 ### Step 7 — Launch night
 
-Saturday **12 September 2026 at 19:00** Vietnam time. You do not try to press Return at 19:00 yourself. You start early, and the script waits.
+Friday **16 October 2026 at 19:00** Vietnam time (iPhone Duo). You do not try to press Return at 19:00 yourself. You start early, and the script waits.
 
 **The suggestion:** sit down at **18:45**. Laptop plugged in. Phone in your hand. Do Not Disturb off. Same computer you practised on.
 
-1. Open `config.yaml` and change **one word**: `mode: test` → `mode: launch`. Save.
-2. Open Terminal and paste the two lines from **Opening Terminal again later**. Wait for `(.venv)`.
-3. Warm the login. Sign in and do 2FA if Apple asks. **Leave Chrome open.**
+**Do not run `--warm-only`.** The buy page will be locked (Apple logo) until launch. Warm will fail.
 
-```bash
-python3 assist.py --warm-only
-```
-
-4. In the **same** Terminal window, start the wait:
+1. `git pull`, then `cp config.example.yaml config.yaml` and open the file (see [Already have the script](#already-have-the-script--iphone-duo-night-16-oct-1900-vn)).
+2. Put **`cvv`** back in, change **`mode: test`** → **`mode: launch`**. Save.
+3. Open Terminal and paste the two lines from **Opening Terminal again later**. Wait for `(.venv)`.
+4. Run it and **be ready to sign in / finish 2FA** in Chrome if Apple asks:
 
 ```bash
 python3 assist.py --at-launch
@@ -584,19 +663,16 @@ Wait for `(.venv)`, then you can run the next command.
 
 ### Step 7 — Launch night
 
-Saturday **12 September 2026 at 19:00** Vietnam time. You do not try to press Enter at 19:00 yourself. You start early, and the script waits.
+Friday **16 October 2026 at 19:00** Vietnam time (iPhone Duo). You do not try to press Enter at 19:00 yourself. You start early, and the script waits.
 
 **The suggestion:** sit down at **18:45**. Laptop plugged in. Phone in your hand. Do Not Disturb off. Same computer you practised on.
 
-1. Open `config.yaml` and change **one word**: `mode: test` → `mode: launch`. Save.
-2. Open PowerShell and paste the two lines from **Opening PowerShell again later**. Wait for `(.venv)`.
-3. Warm the login. Sign in and do 2FA if Apple asks. **Leave Chrome open.**
+**Do not run `--warm-only`.** The buy page will be locked (Apple logo) until launch. Warm will fail.
 
-```powershell
-python assist.py --warm-only
-```
-
-4. In the **same** PowerShell window, start the wait:
+1. `git pull`, then `copy config.example.yaml config.yaml` and open the file (see [Already have the script](#already-have-the-script--iphone-duo-night-16-oct-1900-vn)).
+2. Put **`cvv`** back in, change **`mode: test`** → **`mode: launch`**. Save.
+3. Open PowerShell and paste the two lines from **Opening PowerShell again later**. Wait for `(.venv)`.
+4. Run it and **be ready to sign in / finish 2FA** in Chrome if Apple asks:
 
 ```powershell
 python assist.py --at-launch
@@ -619,7 +695,7 @@ You can start `--at-launch` five, ten or thirty minutes early. Waiting is free. 
 | `No module named 'yaml'` | Your line is missing `(.venv)`. Run the two “open again later” lines first. |
 | `Invalid timezone: Asia/Ho_Chi_Minh` | Old clone. From the project folder, with `(.venv)` showing: `python3 -m pip install -r requirements.txt` (Windows: `py -3 -m pip install -r requirements.txt`). |
 | `git: command not found` | Step 1 is not finished. Wait, then use a new Terminal or PowerShell. |
-| Apple asks you to sign in on every run | Chrome got closed. Run `--warm-only` again and leave it open. |
+| Apple asks you to sign in on every run | Chrome got closed. On launch night let `--at-launch` wait for you to sign in. Do not run `--warm-only` (the page is locked). `--warm-only` is for practice days only. |
 | It seems stuck on a sign-in page | It is waiting for you. Finish the 2FA code in that Chrome window. |
 | Nothing happens for 10–20 seconds | That is Apple's page loading. Do not click anything. |
 | `USER PICK waiting for COLOR…` (or SIZE, or STORAGE) | Click that tile yourself in Chrome and the run continues. |
