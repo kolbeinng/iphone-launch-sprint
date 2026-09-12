@@ -5031,9 +5031,6 @@ def advance_checkout_to_payment(
     ship_addr = checkout_cfg.get("shipping_address") or checkout_cfg.get("address") or {}
     if not isinstance(ship_addr, dict):
         ship_addr = {}
-    bill_addr = checkout_cfg.get("billing_address") or ship_addr
-    if not isinstance(bill_addr, dict):
-        bill_addr = ship_addr
     contact = checkout_cfg.get("contact") or {}
     if not isinstance(contact, dict):
         contact = {}
@@ -5242,94 +5239,11 @@ def advance_checkout_to_payment(
         cvv = str(checkout_cfg.get("cvv") or checkout_cfg.get("security_code") or "")
     _fill_cvv(page, cvv, timer=timer, mount_timeout_ms=3_000)
 
-    # Only fill billing when Apple actually asks (popup or empty on-page form).
-    # Machines that go straight to Đặt hàng are left alone.
-    sync_billing = bool(
-        isinstance(checkout_cfg, dict) and checkout_cfg.get("sync_billing_address")
-    )
-    force_billing = bool(
-        isinstance(checkout_cfg, dict)
-        and checkout_cfg.get("force_sync_billing_address")
-    )
-    if not sync_billing:
-        log(
-            "Billing sync OFF — using Apple Account card address "
-            "(set sync_billing_address: true to fill it from config when Apple asks)"
-        )
-    prompt = _billing_prompt_visible(page)
-    if sync_billing and not prompt and not force_billing:
-        log("No billing address prompt — skipping fill")
-    if sync_billing and (prompt or force_billing):
-        if force_billing and not prompt:
-            try:
-                _open_billing_address_edit(page)
-            except Exception as open_exc:  # noqa: BLE001
-                log(f"force_sync_billing_address could not open editor: {open_exc}")
-        _sync_billing_address_from_checkout(page, bill_addr, timer=timer)
-        # Popup can wipe CVV — force re-fill without long visibility wait
-        if cvv:
-            still = page.evaluate(
-                """(want) => {
-                  const el = document.querySelector(
-                    '[data-autom="security-code-input"]'
-                  );
-                  if (!el) return { ok: false, len: 0 };
-                  const v = (el.value || '').replace(/\\D/g, '');
-                  if (v === want) return { ok: true, len: v.length };
-                  const proto = window.HTMLInputElement.prototype;
-                  const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-                  if (desc && desc.set) desc.set.call(el, want);
-                  else el.value = want;
-                  const tracker = el._valueTracker;
-                  if (tracker && typeof tracker.setValue === 'function') {
-                    tracker.setValue('');
-                  }
-                  el.dispatchEvent(new Event('input', { bubbles: true }));
-                  el.dispatchEvent(new Event('change', { bubbles: true }));
-                  const v2 = (el.value || '').replace(/\\D/g, '');
-                  return { ok: v2 === want, len: v2.length };
-                }""",
-                re.sub(r"\D", "", cvv),
-            ) or {}
-            if still.get("ok"):
-                log(f"FILL  CVV re-assert after address save (len={still.get('len')})")
-            else:
-                log("CVV missing after address save — short remount re-fill")
-                _fill_cvv(page, cvv, timer=timer, mount_timeout_ms=1_500)
+    # Card billing address is pre-set on the Apple Account. Do not type it,
+    # do not open Chỉnh sửa, do not fill the popup if Apple still shows one.
+    log("Billing address — leaving the Apple Account card address as-is")
 
-    try:
-        _click_review_and_stop_at_place_order(page, timer=timer)
-    except RuntimeError as exc:
-        msg = str(exc).lower()
-        if sync_billing and (
-            "không hợp lệ" in msg
-            or "billing" in msg
-            or "address" in msg
-            or "định dạng" in msg
-            or "error" in msg
-        ):
-            log(
-                f"Review blocked — filling billing address now: {exc}"
-            )
-            if not _billing_prompt_visible(page):
-                appeared = False
-                deadline = time.perf_counter() + 3.0
-                while time.perf_counter() < deadline:
-                    if _billing_prompt_visible(page):
-                        appeared = True
-                        break
-                    page.wait_for_timeout(100)
-                if not appeared:
-                    log(
-                        "Review error but no billing prompt — "
-                        "not clicking Chỉnh sửa; leaving the card address alone"
-                    )
-                    raise
-            _sync_billing_address_from_checkout(page, bill_addr, timer=timer)
-            _fill_cvv(page, cvv, timer=timer, mount_timeout_ms=1_500)
-            _click_review_and_stop_at_place_order(page, timer=timer)
-        else:
-            raise
+    _click_review_and_stop_at_place_order(page, timer=timer)
 
 
 def click_next_steps(

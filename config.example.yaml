@@ -134,10 +134,8 @@ checkout:
   location_district: "Quận Bình Thạnh"
   use_new_address: false
   cvv: ""
-  # Fill billing only if Apple already popped up the form (or shows an empty
-  # on-page address). Machines that go straight to Đặt hàng are left alone.
-  # force_sync_billing_address: true would click Chỉnh sửa even without a prompt.
-  sync_billing_address: true
+  # Card billing is pre-set in Apple Account. The script never fills it.
+  sync_billing_address: false
   force_sync_billing_address: false
 
   shipping_address:
