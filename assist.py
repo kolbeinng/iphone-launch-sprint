@@ -990,6 +990,7 @@ _MODEL_HUB_TOKENS: dict[str, tuple[list[str], ...]] = {
     "pro": (["Pro"],),
     "plus": (["Plus"],),
     "air": (["Air"],),
+    "duo": (["Duo"],),
 }
 
 
@@ -1041,6 +1042,7 @@ _MODEL_WORDS = {
     "pro": "Pro",
     "plus": "Plus",
     "air": "Air",
+    "duo": "Duo",
     "base": "",
 }
 
@@ -1134,10 +1136,21 @@ def _pick_configured_hub_link(
 
 
 def _hub_link_forbidden_reason(link: dict, *, year: str) -> str | None:
-    """Drop leftover 17 / Fold / Air cards when the order target is iPhone 18."""
+    """Drop hub cards that are not the configured launch/test family."""
     hay = _norm_match_hay(f"{link.get('href') or ''} {link.get('text') or ''}")
     href = (link.get("href") or "").lower()
-    if str(year) != "18":
+    y = str(year or "").lower()
+    if y == "duo":
+        if "iphone 18" in hay or "iphone-18" in href:
+            return "iPhone 18"
+        if "iphone 17" in hay or "iphone-17" in href:
+            return "iPhone 17"
+        if "iphone 16" in hay or "iphone-16" in href:
+            return "iPhone 16"
+        if re.search(r"iphone[- ]?air\b", hay):
+            return "Air"
+        return None
+    if y != "18":
         return None
     if "iphone 17" in hay or "iphone-17" in href:
         return "iPhone 17"
@@ -1162,11 +1175,12 @@ def load_order_target(cfg: dict) -> dict:
         raise ConfigError(
             "config target.year is required. Use the generation number (17, "
             "18), or the family word when the phone has no number in its "
-            "name — iPhone Air is target.year: air, model: air."
+            "name — iPhone Air is year: air, model: air; iPhone Duo is "
+            "year: duo, model: duo."
         )
     if not model:
         raise ConfigError(
-            "config target.model is required: pro-max, pro, plus, base or air."
+            "config target.model is required: pro-max, pro, plus, base, air or duo."
         )
     return {"year": year, "model": model}
 
@@ -1224,6 +1238,20 @@ def assert_family_is_order_target(page, target: dict) -> None:
             f"REFUSE: not iPhone {year} (url={page.url}, h1={h1[:80]!r}). "
             "Will not add to bag — this prevents ordering iPhone 17."
         )
+    if year.lower() == "duo":
+        if "iphone-18" in url or "iphone 18" in blob:
+            raise RuntimeError(
+                "REFUSE: iPhone 18 configure page. Target is iPhone Duo. "
+                "Will not add to bag."
+            )
+        if "iphone-17" in url or "iphone 17" in blob:
+            raise RuntimeError(
+                "REFUSE: iPhone 17 configure page. Target is iPhone Duo. "
+                "Will not add to bag."
+            )
+        if re.search(r"iphone[- ]?air\b", url) or re.search(r"iphone air\b", blob):
+            raise RuntimeError("REFUSE: iPhone Air page. Target is iPhone Duo.")
+        return
     if year == "18":
         if "iphone-17" in url or "iphone 17" in blob:
             raise RuntimeError(
@@ -1347,7 +1375,7 @@ def _reload_until_configure(
     page,
     url: str,
     *,
-    timeout_sec: float = 1200.0,
+    timeout_sec: float = 1800.0,
     poll_ms: int = 800,
     timer: StageTimer | None = None,
     target: dict | None = None,
@@ -1410,7 +1438,7 @@ def wait_family_configure_ready(
     family_match: list[str] | None = None,
     user_pick_timeout_sec: float = 45.0,
     target: dict | None = None,
-    locked_refresh_sec: float = 1200.0,
+    locked_refresh_sec: float = 1800.0,
 ) -> str:
     """
     Resolve a live configure page:
@@ -5565,8 +5593,8 @@ def main(argv: list[str] | None = None) -> int:
                     log(f"family_match — added fallback {tokens!r}")
         product_prefs = cfg.get("product_prefs") if isinstance(cfg.get("product_prefs"), dict) else {}
         use_dynamic = bool(product_prefs) or bool(family_candidates)
-        if str(target.get("year")) == "18":
-            # Never fall back to a leftover iPhone 17 product_url on launch night.
+        if str(target.get("year")) in {"18", "duo"}:
+            # Never fall back to a leftover product_url on a named-family run.
             use_dynamic = True
         # Phase A budget only (hub + user-pick are separate). Default 20s — not minutes.
         unlock_timeout = args.unlock_timeout_sec or int(cfg.get("unlock_timeout_sec") or 20)
@@ -5575,7 +5603,7 @@ def main(argv: list[str] | None = None) -> int:
             or (product_prefs.get("user_pick_timeout_sec") if product_prefs else None)
             or 45
         )
-        locked_refresh_sec = float(cfg.get("locked_refresh_timeout_sec") or 1200)
+        locked_refresh_sec = float(cfg.get("locked_refresh_timeout_sec") or 1800)
         # Warm should use a known-live practice SKU (not the launch family page)
         warm_url_raw = (cfg.get("warm_product_url") or "").strip()
         warm_product_url = (
@@ -5588,10 +5616,10 @@ def main(argv: list[str] | None = None) -> int:
 
     print_checklist_reminder()
     log("DRY-RUN assist — declines only; never purchases")
-    if str(target.get("year")) == "18":
+    if cfg.get("_mode") == "launch":
         log(
             f"ORDER LOCK: {_target_pretty(target)} — "
-            "timed run will REFUSE 17 / Fold / Air"
+            "timed run will REFUSE any other family"
         )
     else:
         log(
@@ -5722,10 +5750,10 @@ def main(argv: list[str] | None = None) -> int:
                 if use_dynamic:
                     candidates = list(family_candidates)
                     if not candidates:
-                        if str(target.get("year")) == "18":
+                        if str(target.get("year")) in {"18", "duo"}:
                             raise RuntimeError(
                                 "ORDER LOCK: family_url / family_urls missing. "
-                                "Refusing leftover product_url (that is iPhone 17 SSO fuel only)."
+                                "Refusing leftover product_url (that is SSO fuel only)."
                             )
                         candidates = [_product_family_url(product_url)]
                     log(f"Dynamic timed run — poll/select on {candidates}")

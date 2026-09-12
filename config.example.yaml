@@ -8,8 +8,8 @@ dry_run: true   # keep true. Script never clicks Đặt hàng.
 # PHONE PICKER — on launch night you change ONE line: mode
 # =============================================================================
 #
-#   mode: test    → iPhone 17 Pro Max (practice, live now)
-#   mode: launch  → iPhone 18 Pro Max (launch night)
+#   mode: test    → iPhone 18 Pro Max (practice, live now)
+#   mode: launch  → iPhone Duo (pre-order 16 Oct 2026, 19:00 VN)
 #
 # Only four things decide which phone lands in the bag:
 #
@@ -23,6 +23,7 @@ dry_run: true   # keep true. Script never clicks Đặt hàng.
 #               plus      the larger non-Pro
 #               base      the plain one (not Plus/Pro/Max)
 #               air       single-size families
+#               duo       iPhone Duo (foldable). year: duo, model: duo.
 #   colors    The one that breaks on launch night, because Apple renames
 #             colours every generation. Write the ENGLISH name: the page shows
 #             Vietnamese, but the DOM handle stays English and both are
@@ -39,62 +40,41 @@ dry_run: true   # keep true. Script never clicks Đặt hàng.
 
 mode: test
 
-# Colour rehearsal on the real iPhone 18 Pro page. Pre-order is not open, so
-# this run ends somewhere in the configurator — it cannot reach the bag. The
-# point is to watch which colour tile it resolves to.
-#
-# Colours are tried in order and the first one PRESENT on the page wins, so as
-# written this picks burgundy. Swap the two lines to rehearse glacier instead.
+# Full practice run on the live iPhone 18 Pro Max page.
+# Colours are tried in order; the first one PRESENT on the page wins.
 test:
   target:
     year: 18
     model: pro-max
   label: "TEST iPhone 18 Pro Max 256GB Burgundy"
   family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro"
+  family_urls:
+    - "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro-max"
   product_prefs:
     colors:
       - "burgundy"          # page reads 'Đỏ Burgundy'
-      - "glacier"           # page reads 'Băng Thanh'
+      - 're:burgundy|đỏ'
     storages: ["256GB", "256"]
     on_miss: wait_user
     user_pick_timeout_sec: 20
     allow_failover: false
 
-# Practice on a phone you can actually buy today — restore this block when you
-# want a full run-through to the Đặt hàng page.
-# test:
-#   target:
-#     year: 17
-#     model: pro-max
-#   label: "TEST iPhone 17 Pro Max 256GB Cam Vũ Trụ"
-#   family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17-pro"
-#   product_prefs:
-#     colors:
-#       - "cosmicorange"    # English handle; the page reads 'Cam Vũ Trụ'
-#       - 're:cosmic|orange|cam\s*vũ'
-#     storages: ["256GB", "256"]
-#     on_miss: wait_user
-#     user_pick_timeout_sec: 20
-#     allow_failover: false
-
-# iPhone Duo (foldable) is NOT the order target — VN pre-order 16 Oct.
+# iPhone Duo — VN pre-order Friday 16 Oct 2026, 19:00.
+# Live VN shop 12 Sept: family URL below, two colours, 256GB–2TB.
+# DOM handles: dimensionColor_nightsky / dimensionColor_starwhite.
 launch:
   target:
-    year: 18
-    model: pro-max
-  label: "iPhone 18 Pro Max 256GB Burgundy"
-  family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro"
-  family_urls:
-    - "https://www.apple.com/vn/shop/buy-iphone/iphone-18-pro-max"
+    year: duo
+    model: duo
+  label: "iPhone Duo 256GB Night Sky"
+  family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-duo"
   product_prefs:
-    # Live VN page 10 Sept: dimensionColorburgundy='Đỏ Burgundy',
-    # glacier='Băng Thanh', silver='Bạc', black='Đen'.
-    #colors:
-    #  - "glacier"
-    #  - 're:glacier|băng'
     colors:
-      - "burgundy"
-      - 're:burgundy|đỏ'
+      - "nightsky"          # page reads 'Trời Đêm'
+      - 're:night.?sky|trời'
+      # Swap to star white:
+      # - "starwhite"       # page reads 'Trắng Ánh Sao'
+      # - 're:star.?white|ánh\s*sao'
     storages: ["256GB", "256"]
     on_miss: wait_user
     user_pick_timeout_sec: 30
@@ -109,7 +89,7 @@ family_user_pick_timeout_sec: 45
 unlock_timeout_sec: 12
 # Family URL is correct but Apple shows a logo / locked configure.
 # Keep refreshing that URL (does not go to the hub) for this many seconds.
-locked_refresh_timeout_sec: 1200
+locked_refresh_timeout_sec: 1800
 
 # SSO fuel only — MUST stay a LIVE iPhone 17 link even on launch night.
 warm_product_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17/m%C3%A0n-h%C3%ACnh-6,3-inch-256gb-%C4%91en"
@@ -118,9 +98,9 @@ product_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17/m%C3%A0n-h%C3%A
 warm_url: "https://www.apple.com/vn/shop/goto/account"
 session_url: "https://www.apple.com/vn/shop/goto/account"
 
-# Official: pre-order Sat 12 Sept 2026, 5:00 a.m. PT = 19:00 VN.
-# Vietnam is in the first wave. Phones arrive Friday 18 Sept.
-launch_at: "2026-09-12T19:00:00"
+# Official: iPhone Duo pre-order Fri 16 Oct 2026, 19:00 VN (5:00 a.m. PT).
+# Phones arrive Friday 23 Oct.
+launch_at: "2026-10-16T19:00:00"
 timezone: "Asia/Ho_Chi_Minh"
 warm_minutes_before: 10
 browser: "Google Chrome"
