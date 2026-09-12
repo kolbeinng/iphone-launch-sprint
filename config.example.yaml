@@ -107,6 +107,9 @@ launch:
 family_hub_url: "https://www.apple.com/vn/shop/buy-iphone/"
 family_user_pick_timeout_sec: 45
 unlock_timeout_sec: 12
+# Family URL is correct but Apple shows a logo / locked configure.
+# Keep refreshing that URL (does not go to the hub) for this many seconds.
+locked_refresh_timeout_sec: 1200
 
 # SSO fuel only — MUST stay a LIVE iPhone 17 link even on launch night.
 warm_product_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-17/m%C3%A0n-h%C3%ACnh-6,3-inch-256gb-%C4%91en"

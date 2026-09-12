@@ -1082,6 +1082,57 @@ def _hub_link_matches(link: dict, family_match: list[str]) -> bool:
     return all(_norm_match_hay(tok) in hay for tok in tokens)
 
 
+def _href_is_configured_family(href: str, family_url: str) -> bool:
+    """True when a hub card points at this family_url (not a longer sibling slug)."""
+    a = urlparse(href or "").path.rstrip("/").lower()
+    b = urlparse(family_url or "").path.rstrip("/").lower()
+    if not a or not b:
+        return False
+    return a == b or a.startswith(b + "/")
+
+
+def _pick_configured_hub_link(
+    links: list[dict],
+    match_sets: list[list[str]],
+    configured_urls: list[str],
+    target: dict | None,
+) -> dict | None:
+    """Pick the hub card for config launch/test (family_url + year/model).
+
+    User click is only for 'not on the hub at all'.
+    """
+    year = str((target or {}).get("year") or "")
+    model = str((target or {}).get("model") or "").strip().lower()
+    allowed: list[dict] = []
+    for x in links:
+        if _hub_link_forbidden_reason(x, year=year):
+            continue
+        href = str(x.get("href") or "")
+        if any(_href_is_configured_family(href, u) for u in configured_urls):
+            allowed.append(x)
+            continue
+        if any(_hub_link_matches(x, tokens) for tokens in match_sets):
+            allowed.append(x)
+    if not allowed:
+        return None
+
+    def _score(x: dict) -> int:
+        href = str(x.get("href") or "")
+        hay = _norm_match_hay(f"{href} {x.get('text') or ''}")
+        score = 0
+        for u in configured_urls:
+            if _href_is_configured_family(href, u):
+                score = max(score, 1000 + len(urlparse(u).path))
+        if model == "pro-max" and ("pro max" in hay or "pro-max" in href.lower()):
+            score += 80
+        elif model == "pro" and "pro max" not in hay and "pro-max" not in href.lower():
+            score += 80
+        return score
+
+    allowed.sort(key=_score, reverse=True)
+    return allowed[0]
+
+
 def _hub_link_forbidden_reason(link: dict, *, year: str) -> str | None:
     """Drop leftover 17 / Fold / Air cards when the order target is iPhone 18."""
     hay = _norm_match_hay(f"{link.get('href') or ''} {link.get('text') or ''}")
@@ -1292,6 +1343,62 @@ def _wait_user_family_page(
     )
 
 
+def _reload_until_configure(
+    page,
+    url: str,
+    *,
+    timeout_sec: float = 1200.0,
+    poll_ms: int = 800,
+    timer: StageTimer | None = None,
+    target: dict | None = None,
+) -> bool:
+    """The family URL is correct but locked (logo / no radios). Refresh until it opens.
+
+    Does not go to the hub. Reloads the same URL until configure unlocks or time runs out.
+    """
+    deadline = time.perf_counter() + max(30.0, float(timeout_sec))
+    log(
+        f"FAMILY A  URL live but locked — refreshing until configure unlocks "
+        f"(up to {timeout_sec:.0f}s) {url}"
+    )
+    t0 = time.perf_counter()
+    last_log = 0.0
+    while time.perf_counter() < deadline:
+        try:
+            goto_resilient(page, url)
+        except Exception as exc:  # noqa: BLE001
+            log(f"FAMILY A  refresh nav: {exc}")
+            page.wait_for_timeout(poll_ms)
+            continue
+        if _is_apple_404(page):
+            log(f"FAMILY A  locked URL turned into soft-404: {url}")
+            return False
+        if _configure_unlocked(page):
+            if not _family_year_matches(page, target):
+                log(
+                    f"FAMILY A  unlocked but WRONG family — stop refreshing {url} "
+                    f"(landed {page.url[:90]})"
+                )
+                return False
+            elapsed = (time.perf_counter() - t0) * 1000
+            log(f"FAMILY A  configure unlocked after refresh ({elapsed:.0f}ms): {page.url}")
+            if timer:
+                timer.since(t0, "0a configure unlocked (refresh)", kind="poll")
+            notify_macos("Assist — configure unlocked", page.url[:80])
+            return True
+        now = time.perf_counter()
+        if now - last_log >= 2.0:
+            left = max(0.0, deadline - now)
+            log(
+                f"FAMILY A  still locked, refreshing… "
+                f"{(now - t0):.0f}s elapsed, {left:.0f}s left"
+            )
+            last_log = now
+        page.wait_for_timeout(poll_ms)
+    log(f"FAMILY A  still locked after {timeout_sec:.0f}s: {url}")
+    return False
+
+
 def wait_family_configure_ready(
     page,
     family_urls: list[str],
@@ -1303,6 +1410,7 @@ def wait_family_configure_ready(
     family_match: list[str] | None = None,
     user_pick_timeout_sec: float = 45.0,
     target: dict | None = None,
+    locked_refresh_sec: float = 1200.0,
 ) -> str:
     """
     Resolve a live configure page:
@@ -1375,11 +1483,20 @@ def wait_family_configure_ready(
                     timer.since(t_all, "0a configure unlocked (guessed URL)", kind="poll")
                 notify_macos("Assist — configure unlocked", page.url[:80])
                 return page.url
-            log(
-                f"FAMILY A  page live but configure not ready yet "
-                f"({(time.perf_counter() - t_round) * 1000:.0f}ms) {page.url[:90]}"
-            )
-            page.wait_for_timeout(poll_ms)
+            # Correct URL, store still locked — keep refreshing this page.
+            # Do not burn 12s and bounce to the hub.
+            if _reload_until_configure(
+                page,
+                url,
+                timeout_sec=locked_refresh_sec,
+                poll_ms=max(poll_ms, 800),
+                timer=timer,
+                target=target,
+            ):
+                return page.url
+            dead_404.add(url)
+            page.wait_for_timeout(min(poll_ms, 200))
+            continue
         log(
             f"FAMILY A  done without unlock "
             f"({(time.perf_counter() - t_all) * 1000:.0f}ms) → hub"
@@ -1404,49 +1521,36 @@ def wait_family_configure_ready(
             )
         )
         year = str((target or {}).get("year") or "")
-        # Strictest token set first; only widen when a set finds nothing at all.
-        for attempt, match_tokens in enumerate(match_sets):
-            matched = [x for x in links if _hub_link_matches(x, match_tokens)]
-            dropped = []
-            kept = []
-            for x in matched:
-                why = _hub_link_forbidden_reason(x, year=year)
-                if why:
-                    dropped.append(f"{x.get('text')!r} ({why})")
-                else:
-                    kept.append(x)
-            if dropped:
-                log("FAMILY B  dropped forbidden cards: " + ", ".join(dropped[:8]))
-            matched = kept
-            looser = " (looser fallback)" if attempt else ""
+        chosen = _pick_configured_hub_link(links, match_sets, urls, target)
+        if chosen:
+            hub_target = str(chosen.get("href") or "")
             log(
-                f"FAMILY B  match tokens={match_tokens!r}{looser} → "
-                f"{len(matched)} hit(s): "
-                + ", ".join(f"{x.get('text')!r}" for x in matched[:6])
+                f"FAMILY B  opening launch card {chosen.get('text')!r} → {hub_target} "
+                f"(target={_target_pretty(target)})"
             )
-            if len(matched) > 1:
-                log("FAMILY B  multiple matches — USER PICK (won't guess)")
-                break
-            if not matched:
-                continue
-            hub_target = matched[0]["href"]
-            log(f"FAMILY B  unique match — opening {hub_target}")
             goto_resilient(page, hub_target)
-            # Brief wait for configure (page may need a beat)
-            t_b = time.perf_counter()
-            while time.perf_counter() - t_b < 8.0:
-                if _configure_unlocked(page):
-                    elapsed = (time.perf_counter() - t_all) * 1000
-                    log(f"FAMILY B  configure unlocked ({elapsed:.0f}ms): {page.url}")
-                    if timer:
-                        timer.since(t_all, "0a configure unlocked (hub)", kind="poll")
-                    notify_macos("Assist — configure unlocked", page.url[:80])
-                    return page.url
-                page.wait_for_timeout(150)
-            log("FAMILY B  opened match but configure not ready — USER PICK")
-            break
+            if _configure_unlocked(page) and _family_year_matches(page, target):
+                elapsed = (time.perf_counter() - t_all) * 1000
+                log(f"FAMILY B  configure unlocked ({elapsed:.0f}ms): {page.url}")
+                if timer:
+                    timer.since(t_all, "0a configure unlocked (hub)", kind="poll")
+                notify_macos("Assist — configure unlocked", page.url[:80])
+                return page.url
+            if _reload_until_configure(
+                page,
+                hub_target,
+                timeout_sec=locked_refresh_sec,
+                poll_ms=max(poll_ms, 800),
+                timer=timer,
+                target=target,
+            ):
+                return page.url
+            log("FAMILY B  launch card still locked — USER PICK")
         else:
-            log("FAMILY B  no match on any token set — USER PICK on hub")
+            log(
+                f"FAMILY B  launch card not on hub "
+                f"(want {_target_pretty(target)}, year={year}) — USER PICK"
+            )
 
         # Scroll hub into a useful spot
         try:
@@ -5471,6 +5575,7 @@ def main(argv: list[str] | None = None) -> int:
             or (product_prefs.get("user_pick_timeout_sec") if product_prefs else None)
             or 45
         )
+        locked_refresh_sec = float(cfg.get("locked_refresh_timeout_sec") or 1200)
         # Warm should use a known-live practice SKU (not the launch family page)
         warm_url_raw = (cfg.get("warm_product_url") or "").strip()
         warm_product_url = (
@@ -5633,6 +5738,7 @@ def main(argv: list[str] | None = None) -> int:
                         family_match=family_match,
                         user_pick_timeout_sec=family_user_pick_sec,
                         target=target,
+                        locked_refresh_sec=locked_refresh_sec,
                     )
                     assert_family_is_order_target(page, target)
                     select_product_dimensions(
