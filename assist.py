@@ -4285,31 +4285,149 @@ def _select_current_label(page, autom: str) -> str:
         return ""
 
 
+def _contact_value_is_masked(s: str) -> bool:
+    return bool(re.search(r"[•●∙·*]", s or ""))
+
+
+def _contact_matches(got: str, want: str, *, phone: bool = False) -> bool:
+    if not (want or "").strip():
+        return True
+    if _contact_value_is_masked(got):
+        return False
+    if phone:
+        g = re.sub(r"\D", "", got or "")
+        w = re.sub(r"\D", "", want or "")
+        if not g or not w or len(g) < 9 or len(w) < 9:
+            return False
+        if g == w:
+            return True
+        g_local = g[2:] if g.startswith("84") else g.lstrip("0")
+        w_local = w[2:] if w.startswith("84") else w.lstrip("0")
+        return bool(g_local) and g_local == w_local
+    return (got or "").strip().lower() == want.strip().lower()
+
+
 def _fill_contact_fields(page, autom: str, value: str) -> str:
-    """Fill contact inputs in-page; return the value that stuck."""
+    """Overwrite Apple ID contact fields (often masked bullets) with config."""
     if not value:
         return ""
-    stuck_map = _fill_fields_native(page, {autom: value})
-    stuck = (stuck_map.get(autom) or "").strip()
-    if stuck.lower() == value.strip().lower():
-        return stuck
-    # Masked Apple fields sometimes need a Playwright fill pass
-    try:
-        loc = page.locator(f'[data-autom="{autom}"]')
-        for i in range(loc.count()):
-            el = loc.nth(i)
+    is_phone = "phone" in autom.lower()
+
+    def _read() -> str:
+        vis = _visible_autom_input(page, autom)
+        if vis is not None:
             try:
-                if not el.is_visible():
-                    continue
-                el.fill(value, timeout=1_500)
-                got = (el.input_value(timeout=800) or "").strip()
-                if got.lower() == value.strip().lower():
-                    return got
+                return (vis.input_value(timeout=600) or "").strip()
             except Exception:  # noqa: BLE001
-                continue
+                pass
+        return (
+            page.evaluate(
+                """(a) => {
+                  const nodes = Array.from(document.querySelectorAll(
+                    'input[data-autom="' + a + '"], textarea[data-autom="' + a + '"]'
+                  ));
+                  const vis = nodes.find((el) => {
+                    const r = el.getBoundingClientRect();
+                    return r.width > 8 && r.height > 8;
+                  }) || nodes[0];
+                  return vis ? (vis.value || '').trim() : '';
+                }""",
+                autom,
+            )
+            or ""
+        ).strip()
+
+    got = _read()
+    if _contact_matches(got, value, phone=is_phone):
+        return got
+
+    _fill_fields_native(page, {autom: value})
+    got = _read()
+    if _contact_matches(got, value, phone=is_phone):
+        return got
+
+    vis = _visible_autom_input(page, autom)
+    if vis is not None:
+        try:
+            vis.click(timeout=1_200)
+            vis.fill("", timeout=800)
+            vis.fill(value, timeout=1_500)
+            vis.dispatch_event("blur")
+        except Exception:  # noqa: BLE001
+            try:
+                vis.fill(value, timeout=1_200, force=True)
+            except Exception:  # noqa: BLE001
+                pass
+        got = _read()
+        if _contact_matches(got, value, phone=is_phone):
+            return got
+        try:
+            vis.click(timeout=800)
+            vis.press("Meta+a")
+            vis.type(value, delay=15, timeout=3_000)
+            vis.dispatch_event("blur")
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        loc = page.locator(f'[data-autom="{autom}"]:visible').first
+        loc.click(timeout=800)
+        loc.fill(value, timeout=1_500)
+        loc.dispatch_event("blur")
     except Exception:  # noqa: BLE001
         pass
-    return stuck
+    return _read()
+
+
+def _ensure_checkout_contact(
+    page,
+    contact: dict,
+    *,
+    timer: StageTimer | None = None,
+) -> None:
+    """Write checkout.contact onto the delivery page, including saved-address runs.
+
+    Apple pre-fills a masked Apple ID email/phone. Selecting a saved shipping
+    address used to skip this, which left the required phone invalid.
+    """
+    if not isinstance(contact, dict):
+        return
+    email = (contact.get("email") or "").strip()
+    phone = (contact.get("phone") or "").strip()
+    if not email and not phone:
+        return
+    try:
+        page.wait_for_function(
+            """() => !!document.querySelector(
+              '[data-autom="form-field-emailAddress"], '
+              + '[data-autom="form-field-fullDaytimePhone"]'
+            )""",
+            timeout=4_000,
+        )
+    except Exception:  # noqa: BLE001
+        log("No delivery contact fields on this page — skip")
+        return
+    if email:
+        t0 = time.perf_counter()
+        got = _fill_contact_fields(page, "form-field-emailAddress", email)
+        if not _contact_matches(got, email, phone=False):
+            log(
+                f"Contact email did not stick (wanted {email!r}, got {got!r}) "
+                "— continuing; Apple ID email is sometimes locked"
+            )
+        else:
+            log(f"Filled contact email ({(time.perf_counter() - t0) * 1000:.0f}ms)")
+        if timer:
+            timer.mark("15c email")
+    if phone:
+        t0 = time.perf_counter()
+        got = _fill_contact_fields(page, "form-field-fullDaytimePhone", phone)
+        if not _contact_matches(got, phone, phone=True):
+            raise RuntimeError(
+                f"Contact phone did not stick: wanted {phone!r}, got {got!r}"
+            )
+        log(f"Filled contact phone ({(time.perf_counter() - t0) * 1000:.0f}ms)")
+        if timer:
+            timer.mark("15c phone")
 
 
 def _click_visible_text(page, *candidates: str) -> str | None:
@@ -4817,8 +4935,11 @@ def _fill_new_shipping_address(
     if email:
         t0 = time.perf_counter()
         got = _fill_contact_fields(page, "form-field-emailAddress", email)
-        if got.lower() != email.lower():
-            raise RuntimeError(f"Email did not stick: wanted {email!r}, got {got!r}")
+        if not _contact_matches(got, email, phone=False):
+            log(
+                f"Email did not stick (wanted {email!r}, got {got!r}) "
+                "— continuing; Apple ID email is sometimes locked"
+            )
         ms = (time.perf_counter() - t0) * 1000
         log(f"Filled email: {got} ({ms:.0f}ms)")
         if timer:
@@ -4826,8 +4947,7 @@ def _fill_new_shipping_address(
     if phone:
         t0 = time.perf_counter()
         got = _fill_contact_fields(page, "form-field-fullDaytimePhone", phone)
-        digits = lambda s: re.sub(r"\D", "", s or "")
-        if digits(got) != digits(phone) and got != phone:
+        if not _contact_matches(got, phone, phone=True):
             raise RuntimeError(f"Phone did not stick: wanted {phone!r}, got {got!r}")
         ms = (time.perf_counter() - t0) * 1000
         log(f"Filled phone: {got} ({ms:.0f}ms)")
@@ -5110,6 +5230,8 @@ def advance_checkout_to_payment(
         )
         timer.since(t_verify, "15e address verified", kind="wait")
 
+    _ensure_checkout_contact(page, contact, timer=timer)
+
     # Prefind → wait enabled → click (in-page then Playwright force, like pre-SSO)
     t_ship_en = time.perf_counter()
     page.wait_for_function(
@@ -5168,6 +5290,13 @@ def advance_checkout_to_payment(
                 f"WAIT  still not billing (attempt {attempt + 1}, _s={step}): {hop_exc}"
                 + (f" errors={errs!r}" if errs else "")
             )
+            err_blob = " ".join(errs or []).lower()
+            if any(
+                tok in err_blob
+                for tok in ("bắt buộc", "required", "điện thoại", "phone", "email")
+            ):
+                log("Delivery form still wants contact — rewriting checkout.contact")
+                _ensure_checkout_contact(page, contact, timer=timer)
             page.wait_for_timeout(200)
 
     if not billing_ok:
