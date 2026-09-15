@@ -11,59 +11,7 @@ Nó điền hết phần thanh toán rồi **dừng ở nút Đặt hàng**. Nó
 
 Một lần chạy khoảng một phút. Chỉ khoảng một giây là mình bấm; phần còn lại là Apple đang tải trang.
 
----
-
-## Đã tải script rồi — đêm iPhone Duo (16 tháng 10, 19:00 VN)
-
-Bạn đã clone lần trước. **Đừng cài lại từ đầu.** Làm đúng các bước này.
-
-Chạy `--at-launch`: script đợi tới 19:00, làm mới trang đến khi hết logo Apple (tối đa `locked_refresh_timeout_sec`, mặc định 30 phút), và **đợi bạn đăng nhập / 2FA** nếu Apple hỏi.
-
-### Mac
-
-```bash
-cd ~/Projects/iphone-launch-sprint
-source .venv/bin/activate
-git pull
-cp config.example.yaml config.yaml
-open -e config.yaml
-```
-
-Trong file, sửa rồi lưu (⌘S):
-
-- **`mode`:** `launch`
-- **`cvv`:** 3 số trên thẻ
-- **`checkout.quantity`:** số máy (`1` hoặc `2` — Apple hay giới hạn 2)
-- **`storages`** trong khối `launch:`: dung lượng, ví dụ `["256GB", "256"]` hoặc `["512GB", "512"]` (Duo còn `1TB`, `2TB`)
-- **`locked_refresh_timeout_sec`:** bao lâu script làm mới trang khi còn logo (mặc định `1800` = 30 phút)
-
-```bash
-python3 assist.py --at-launch
-```
-
-### Windows 11
-
-```powershell
-cd $env:USERPROFILE\Projects\iphone-launch-sprint
-.\.venv\Scripts\Activate.ps1
-git pull
-copy config.example.yaml config.yaml
-notepad config.yaml
-```
-
-Trong file, sửa rồi Save:
-
-- **`mode`:** `launch`
-- **`cvv`:** 3 số trên thẻ
-- **`checkout.quantity`:** số máy (`1` hoặc `2` — Apple hay giới hạn 2)
-- **`storages`** trong khối `launch:`: dung lượng, ví dụ `["256GB", "256"]` hoặc `["512GB", "512"]` (Duo còn `1TB`, `2TB`)
-- **`locked_refresh_timeout_sec`:** bao lâu script làm mới trang khi còn logo (mặc định `1800` = 30 phút)
-
-```powershell
-python assist.py --at-launch
-```
-
-Ngồi sớm (khoảng 18:45). Điện thoại trong tay cho mã 2FA. **Để cửa sổ Chrome mở.** Đừng tắt Chrome. Script đếm đến 19:00 rồi tự chạy. Khi tới Đặt hàng thì **bạn** bấm.
+**Đã tải script rồi?** [Nhảy tới đêm iPhone Duo →](#đã-tải-script-rồi--đêm-iphone-duo-16-tháng-10-1900-vn)
 
 ---
 
@@ -77,7 +25,7 @@ Bạn cần làm sẵn những việc này **trước**, đừng đợi đêm m�
 
 **Thẻ và địa chỉ giao hàng bạn tự lưu** trong tài khoản Apple — script không gõ số thẻ. CVV trong `config.yaml` được gõ lúc chạy. Lần `--now` đầu tiên là lúc đăng nhập / 2FA nếu Apple hỏi.
 
-Đã clone lần trước? Làm [Đã tải script rồi](#đã-tải-script-rồi--đêm-iphone-duo-16-tháng-10-1900-vn) — `git pull`, copy config, `mode: launch`, `--at-launch`. Đừng cài lại.
+Đã clone lần trước? [Nhảy tới đêm iPhone Duo →](#đã-tải-script-rồi--đêm-iphone-duo-16-tháng-10-1900-vn) — đừng cài lại.
 
 Chọn máy của bạn (cài lần đầu):
 
@@ -195,22 +143,13 @@ source .venv/bin/activate
 
 Thứ Sáu **16 tháng 10 năm 2026 lúc 19:00** giờ Việt Nam (iPhone Duo). Đừng tự bấm Return đúng 19:00. Bạn khởi động sớm, script sẽ đợi.
 
-**Gợi ý:** ngồi vào lúc **18:45**. Cắm sạc laptop. Điện thoại trong tay. Tắt Không làm phiền. Cùng máy bạn đã luyện tập.
+**Gợi ý:** ngồi vào lúc **18:45**. Cắm sạc laptop. Điện thoại trong tay. Tắt Không làm phiền.
 
-1. `git pull`, rồi `cp config.example.yaml config.yaml` và mở file (xem [Đã tải script rồi](#đã-tải-script-rồi--đêm-iphone-duo-16-tháng-10-1900-vn)).
-2. Điền **`cvv`**, đổi **`mode: launch`**, chọn **`checkout.quantity`**, **`storages`**, và **`locked_refresh_timeout_sec`** (`1800` = 30 phút làm mới khi còn logo). Lưu.
-3. Mở Terminal, dán hai dòng ở **Mở Terminal lần sau**. Đợi `(.venv)`.
-4. Chạy và **sẵn sàng đăng nhập / 2FA** trong Chrome nếu Apple hỏi:
+Lệnh đầy đủ (`git pull`, copy config, `mode` / `cvv` / số máy / dung lượng): [Đã tải script rồi — đêm iPhone Duo](#đã-tải-script-rồi--đêm-iphone-duo-16-tháng-10-1900-vn) — mục đó nằm ngay sau phần Windows.
 
-```bash
-python3 assist.py --at-launch
-```
+Bạn sẽ thấy đếm ngược, kiểu `T-0: 8.4 min left`, rồi `T-0 — GO`. Ở gần máy. Đừng đóng Chrome. Đừng tắt Terminal. Khi tới Đặt hàng thì **bạn** bấm. Script không bao giờ bấm.
 
-Bạn sẽ thấy đếm ngược, kiểu `T-0: 8.4 min left`, rồi `T-0 — GO`. Ở gần máy. Đừng đóng Chrome. Đừng tắt Terminal. Đừng cố canh giờ. Nếu nó kêu hoặc nhờ bạn bấm màu / dung lượng, bấm trong Chrome.
-
-Khi tới Đặt hàng thì nó dừng và kêu. **Bạn** bấm Đặt hàng. Script không bao giờ bấm.
-
-Bạn có thể chạy `--at-launch` sớm năm, mười hoặc ba mươi phút. Đợi không mất gì. Lỡ thì mất máy. Nếu đã quá 19:00, nó in `launch_at already past — sprinting NOW` rồi chạy ngay.
+Bạn có thể chạy `--at-launch` sớm năm, mười hoặc ba mươi phút. Nếu đã quá 19:00, nó in `launch_at already past — sprinting NOW` rồi chạy ngay.
 
 ---
 
@@ -303,22 +242,67 @@ cd $env:USERPROFILE\Projects\iphone-launch-sprint
 
 Thứ Sáu **16 tháng 10 năm 2026 lúc 19:00** giờ Việt Nam (iPhone Duo). Đừng tự bấm Enter đúng 19:00. Bạn khởi động sớm, script sẽ đợi.
 
-**Gợi ý:** ngồi vào lúc **18:45**. Cắm sạc laptop. Điện thoại trong tay. Tắt Không làm phiền. Cùng máy bạn đã luyện tập.
+**Gợi ý:** ngồi vào lúc **18:45**. Cắm sạc laptop. Điện thoại trong tay. Tắt Không làm phiền.
 
-1. `git pull`, rồi `copy config.example.yaml config.yaml` và mở file (xem [Đã tải script rồi](#đã-tải-script-rồi--đêm-iphone-duo-16-tháng-10-1900-vn)).
-2. Điền **`cvv`**, đổi **`mode: launch`**, chọn **`checkout.quantity`**, **`storages`**, và **`locked_refresh_timeout_sec`** (`1800` = 30 phút làm mới khi còn logo). Save.
-3. Mở PowerShell, dán hai dòng ở **Mở PowerShell lần sau**. Đợi `(.venv)`.
-4. Chạy và **sẵn sàng đăng nhập / 2FA** trong Chrome nếu Apple hỏi:
+Lệnh đầy đủ (`git pull`, copy config, `mode` / `cvv` / số máy / dung lượng): [Đã tải script rồi — đêm iPhone Duo](#đã-tải-script-rồi--đêm-iphone-duo-16-tháng-10-1900-vn) — mục đó nằm ngay dưới đây.
+
+Bạn sẽ thấy đếm ngược, kiểu `T-0: 8.4 min left`, rồi `T-0 — GO`. Ở gần máy. Đừng đóng Chrome. Đừng đóng PowerShell. Khi tới Đặt hàng thì **bạn** bấm. Script không bao giờ bấm.
+
+Bạn có thể chạy `--at-launch` sớm năm, mười hoặc ba mươi phút. Nếu đã quá 19:00, nó in `launch_at already past — sprinting NOW` rồi chạy ngay.
+
+---
+
+## Đã tải script rồi — đêm iPhone Duo (16 tháng 10, 19:00 VN)
+
+Bạn đã clone lần trước. **Đừng cài lại từ đầu.** Làm đúng các bước này.
+
+Chạy `--at-launch`: script đợi tới 19:00, làm mới trang đến khi hết logo Apple (tối đa `locked_refresh_timeout_sec`, mặc định 30 phút), và **đợi bạn đăng nhập / 2FA** nếu Apple hỏi.
+
+### Mac
+
+```bash
+cd ~/Projects/iphone-launch-sprint
+source .venv/bin/activate
+git pull
+cp config.example.yaml config.yaml
+open -e config.yaml
+```
+
+Trong file, sửa rồi lưu (⌘S):
+
+- **`mode`:** `launch`
+- **`cvv`:** 3 số trên thẻ
+- **`checkout.quantity`:** số máy (`1` hoặc `2` — Apple hay giới hạn 2)
+- **`storages`** trong khối `launch:`: dung lượng, ví dụ `["256GB", "256"]` hoặc `["512GB", "512"]` (Duo còn `1TB`, `2TB`)
+- **`locked_refresh_timeout_sec`:** bao lâu script làm mới trang khi còn logo (mặc định `1800` = 30 phút)
+
+```bash
+python3 assist.py --at-launch
+```
+
+### Windows 11
+
+```powershell
+cd $env:USERPROFILE\Projects\iphone-launch-sprint
+.\.venv\Scripts\Activate.ps1
+git pull
+copy config.example.yaml config.yaml
+notepad config.yaml
+```
+
+Trong file, sửa rồi Save:
+
+- **`mode`:** `launch`
+- **`cvv`:** 3 số trên thẻ
+- **`checkout.quantity`:** số máy (`1` hoặc `2` — Apple hay giới hạn 2)
+- **`storages`** trong khối `launch:`: dung lượng, ví dụ `["256GB", "256"]` hoặc `["512GB", "512"]` (Duo còn `1TB`, `2TB`)
+- **`locked_refresh_timeout_sec`:** bao lâu script làm mới trang khi còn logo (mặc định `1800` = 30 phút)
 
 ```powershell
 python assist.py --at-launch
 ```
 
-Bạn sẽ thấy đếm ngược, kiểu `T-0: 8.4 min left`, rồi `T-0 — GO`. Ở gần máy. Đừng đóng Chrome. Đừng đóng PowerShell. Đừng cố canh giờ. Nếu nó kêu hoặc nhờ bạn bấm màu / dung lượng, bấm trong Chrome.
-
-Khi tới Đặt hàng thì nó dừng và kêu. **Bạn** bấm Đặt hàng. Script không bao giờ bấm.
-
-Bạn có thể chạy `--at-launch` sớm năm, mười hoặc ba mươi phút. Đợi không mất gì. Lỡ thì mất máy. Nếu đã quá 19:00, nó in `launch_at already past — sprinting NOW` rồi chạy ngay.
+Ngồi sớm (khoảng 18:45). Điện thoại trong tay cho mã 2FA. **Để cửa sổ Chrome mở.** Đừng tắt Chrome. Script đếm đến 19:00 rồi tự chạy. Khi tới Đặt hàng thì **bạn** bấm.
 
 ---
 
@@ -351,59 +335,7 @@ It fills the whole checkout for you and then **stops at the Đặt hàng button*
 
 A full run takes about a minute. Roughly one second of that is our clicking; the rest is Apple's pages loading.
 
----
-
-## Already have the script — iPhone Duo night (16 Oct, 19:00 VN)
-
-You cloned this last time. **Do not install from scratch.** Do exactly this.
-
-Run `--at-launch`: it waits until 19:00, refreshes until the Apple logo goes away (up to `locked_refresh_timeout_sec`, default 30 minutes), and **waits for you to sign in / finish 2FA** if Apple asks.
-
-### Mac
-
-```bash
-cd ~/Projects/iphone-launch-sprint
-source .venv/bin/activate
-git pull
-cp config.example.yaml config.yaml
-open -e config.yaml
-```
-
-In the file, change these then save (⌘S):
-
-- **`mode`:** `launch`
-- **`cvv`:** 3 digits on the card
-- **`checkout.quantity`:** how many phones (`1` or `2` — Apple often caps at 2)
-- **`storages`** under `launch:`: capacity, e.g. `["256GB", "256"]` or `["512GB", "512"]` (Duo also has `1TB`, `2TB`)
-- **`locked_refresh_timeout_sec`:** how long it keeps refreshing while the page is a logo (default `1800` = 30 minutes)
-
-```bash
-python3 assist.py --at-launch
-```
-
-### Windows 11
-
-```powershell
-cd $env:USERPROFILE\Projects\iphone-launch-sprint
-.\.venv\Scripts\Activate.ps1
-git pull
-copy config.example.yaml config.yaml
-notepad config.yaml
-```
-
-In the file, change these then Save:
-
-- **`mode`:** `launch`
-- **`cvv`:** 3 digits on the card
-- **`checkout.quantity`:** how many phones (`1` or `2` — Apple often caps at 2)
-- **`storages`** under `launch:`: capacity, e.g. `["256GB", "256"]` or `["512GB", "512"]` (Duo also has `1TB`, `2TB`)
-- **`locked_refresh_timeout_sec`:** how long it keeps refreshing while the page is a logo (default `1800` = 30 minutes)
-
-```powershell
-python assist.py --at-launch
-```
-
-Sit down early (around 18:45). Phone in hand for 2FA. **Leave Chrome open.** Do not quit Chrome. The script counts down to 19:00 and then runs. When it reaches Đặt hàng, **you** click it.
+**Already have the script?** [Jump to iPhone Duo night →](#already-have-the-script--iphone-duo-night-16-oct-1900-vn)
 
 ---
 
@@ -417,7 +349,7 @@ Do these **beforehand**, not on launch night.
 
 **You save the card and shipping address yourself** in the Apple account — the script never types the card number. The CVV in `config.yaml` is typed when you run. The first `--now` is when you sign in / finish 2FA if Apple asks.
 
-Already cloned last time? Use [Already have the script](#already-have-the-script--iphone-duo-night-16-oct-1900-vn) — `git pull`, copy config, `mode: launch`, `--at-launch`. Do not install again.
+Already cloned last time? [Jump to iPhone Duo night →](#already-have-the-script--iphone-duo-night-16-oct-1900-vn) — do not install again.
 
 Then pick your computer (first-time install):
 
@@ -535,22 +467,13 @@ Wait for `(.venv)`, then you can run the next command.
 
 Friday **16 October 2026 at 19:00** Vietnam time (iPhone Duo). You do not try to press Return at 19:00 yourself. You start early, and the script waits.
 
-**The suggestion:** sit down at **18:45**. Laptop plugged in. Phone in your hand. Do Not Disturb off. Same computer you practised on.
+**The suggestion:** sit down at **18:45**. Laptop plugged in. Phone in your hand. Do Not Disturb off.
 
-1. `git pull`, then `cp config.example.yaml config.yaml` and open the file (see [Already have the script](#already-have-the-script--iphone-duo-night-16-oct-1900-vn)).
-2. Put **`cvv`** back in, set **`mode: launch`**, choose **`checkout.quantity`**, **`storages`**, and **`locked_refresh_timeout_sec`** (`1800` = 30 minutes of refresh while the page is a logo). Save.
-3. Open Terminal and paste the two lines from **Opening Terminal again later**. Wait for `(.venv)`.
-4. Run it and **be ready to sign in / finish 2FA** in Chrome if Apple asks:
+Full commands (`git pull`, copy config, `mode` / `cvv` / quantity / storage): [Already have the script — iPhone Duo night](#already-have-the-script--iphone-duo-night-16-oct-1900-vn) — that section is right after the Windows setup.
 
-```bash
-python3 assist.py --at-launch
-```
+You will see a countdown, like `T-0: 8.4 min left`, then `T-0 — GO`. Stay nearby. Do not close Chrome. Do not quit Terminal. When it reaches Đặt hàng, **you** click it. The script never clicks it.
 
-You will see a countdown, like `T-0: 8.4 min left`, then `T-0 — GO`. Stay nearby. Do not close Chrome. Do not quit Terminal. Do not try to time it. If it beeps or asks you to click a colour or storage, click it in Chrome.
-
-When it reaches Đặt hàng it stops and beeps. **You** click Đặt hàng. The script never clicks it.
-
-You can start `--at-launch` five, ten or thirty minutes early. Waiting is free. Missing it is not. If 19:00 has already passed, it prints `launch_at already past — sprinting NOW` and goes immediately.
+You can start `--at-launch` five, ten or thirty minutes early. If 19:00 has already passed, it prints `launch_at already past — sprinting NOW` and goes immediately.
 
 ---
 
@@ -643,22 +566,67 @@ Wait for `(.venv)`, then you can run the next command.
 
 Friday **16 October 2026 at 19:00** Vietnam time (iPhone Duo). You do not try to press Enter at 19:00 yourself. You start early, and the script waits.
 
-**The suggestion:** sit down at **18:45**. Laptop plugged in. Phone in your hand. Do Not Disturb off. Same computer you practised on.
+**The suggestion:** sit down at **18:45**. Laptop plugged in. Phone in your hand. Do Not Disturb off.
 
-1. `git pull`, then `copy config.example.yaml config.yaml` and open the file (see [Already have the script](#already-have-the-script--iphone-duo-night-16-oct-1900-vn)).
-2. Put **`cvv`** back in, set **`mode: launch`**, choose **`checkout.quantity`**, **`storages`**, and **`locked_refresh_timeout_sec`** (`1800` = 30 minutes of refresh while the page is a logo). Save.
-3. Open PowerShell and paste the two lines from **Opening PowerShell again later**. Wait for `(.venv)`.
-4. Run it and **be ready to sign in / finish 2FA** in Chrome if Apple asks:
+Full commands (`git pull`, copy config, `mode` / `cvv` / quantity / storage): [Already have the script — iPhone Duo night](#already-have-the-script--iphone-duo-night-16-oct-1900-vn) — that section is right below.
+
+You will see a countdown, like `T-0: 8.4 min left`, then `T-0 — GO`. Stay nearby. Do not close Chrome. Do not close PowerShell. When it reaches Đặt hàng, **you** click it. The script never clicks it.
+
+You can start `--at-launch` five, ten or thirty minutes early. If 19:00 has already passed, it prints `launch_at already past — sprinting NOW` and goes immediately.
+
+---
+
+## Already have the script — iPhone Duo night (16 Oct, 19:00 VN)
+
+You cloned this last time. **Do not install from scratch.** Do exactly this.
+
+Run `--at-launch`: it waits until 19:00, refreshes until the Apple logo goes away (up to `locked_refresh_timeout_sec`, default 30 minutes), and **waits for you to sign in / finish 2FA** if Apple asks.
+
+### Mac
+
+```bash
+cd ~/Projects/iphone-launch-sprint
+source .venv/bin/activate
+git pull
+cp config.example.yaml config.yaml
+open -e config.yaml
+```
+
+In the file, change these then save (⌘S):
+
+- **`mode`:** `launch`
+- **`cvv`:** 3 digits on the card
+- **`checkout.quantity`:** how many phones (`1` or `2` — Apple often caps at 2)
+- **`storages`** under `launch:`: capacity, e.g. `["256GB", "256"]` or `["512GB", "512"]` (Duo also has `1TB`, `2TB`)
+- **`locked_refresh_timeout_sec`:** how long it keeps refreshing while the page is a logo (default `1800` = 30 minutes)
+
+```bash
+python3 assist.py --at-launch
+```
+
+### Windows 11
+
+```powershell
+cd $env:USERPROFILE\Projects\iphone-launch-sprint
+.\.venv\Scripts\Activate.ps1
+git pull
+copy config.example.yaml config.yaml
+notepad config.yaml
+```
+
+In the file, change these then Save:
+
+- **`mode`:** `launch`
+- **`cvv`:** 3 digits on the card
+- **`checkout.quantity`:** how many phones (`1` or `2` — Apple often caps at 2)
+- **`storages`** under `launch:`: capacity, e.g. `["256GB", "256"]` or `["512GB", "512"]` (Duo also has `1TB`, `2TB`)
+- **`locked_refresh_timeout_sec`:** how long it keeps refreshing while the page is a logo (default `1800` = 30 minutes)
 
 ```powershell
 python assist.py --at-launch
 ```
 
-You will see a countdown, like `T-0: 8.4 min left`, then `T-0 — GO`. Stay nearby. Do not close Chrome. Do not close PowerShell. Do not try to time it. If it beeps or asks you to click a colour or storage, click it in Chrome.
-
-When it reaches Đặt hàng it stops and beeps. **You** click Đặt hàng. The script never clicks it.
-
-You can start `--at-launch` five, ten or thirty minutes early. Waiting is free. Missing it is not. If 19:00 has already passed, it prints `launch_at already past — sprinting NOW` and goes immediately.
+Sit down early (around 18:45). Phone in hand for 2FA. **Leave Chrome open.** Do not quit Chrome. The script counts down to 19:00 and then runs. When it reaches Đặt hàng, **you** click it.
 
 ---
 
