@@ -38,7 +38,7 @@ dry_run: true   # keep true. Script never clicks Đặt hàng.
 # colour, because allow_failover is false.
 # =============================================================================
 
-mode: test
+mode: launch
 
 # Full practice run on the live iPhone 18 Pro Max page.
 # Colours are tried in order; the first one PRESENT on the page wins.
