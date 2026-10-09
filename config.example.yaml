@@ -112,7 +112,7 @@ manual_clicks:
 checkout:
   # How many of this iPhone to take to checkout. Bag default is 1.
   # Script sets this on the bag page before Thanh Toán. Apple often caps iPhone at 2.
-  quantity: 1
+  quantity: 2
   location_city: "Thành phố Hồ Chí Minh"
   location_district: "Quận Bình Thạnh"
   use_new_address: false
