@@ -6,8 +6,8 @@ Script luyện tập để mua iPhone trên **apple.com/vn**.
 
 Nó điền hết phần thanh toán rồi **dừng ở nút Đặt hàng**. Nó không bao giờ bấm nút đó. Bạn bấm. Phải để `dry_run: true`, không thì script không chạy.
 
-- **Luyện tập ngay:** iPhone 18 Pro Max · 256GB · Burgundy (`mode: test`)
-- **Đêm mở bán:** iPhone Duo · 256GB · Trời Đêm — đổi `mode: launch` trong `config.yaml`
+- **File mẫu copy ra:** iPhone Duo · 256GB · Trắng Ánh Sao (`mode: launch` đã để sẵn)
+- **Muốn luyện iPhone 18 Pro Max:** 256GB · Burgundy — đổi `mode: test`
 
 Một lần chạy khoảng một phút. Chỉ khoảng một giây là mình bấm; phần còn lại là Apple đang tải trang.
 
@@ -114,7 +114,7 @@ open -e config.yaml
 
 TextEdit mở ra. Điền **`cvv`** (3 số trên thẻ), rồi bấm ⌘S để lưu và đóng cửa sổ.
 
-Các thứ khác để yên. Tên, địa chỉ, email và số điện thoại đã có trong file. Để nguyên `mode: test` và `dry_run: true`.
+Các thứ khác để yên. Tên, địa chỉ, email và số điện thoại đã có trong file. Để nguyên `mode: launch` và `dry_run: true`.
 
 ### Bước 5 — Chạy thử
 
@@ -213,7 +213,7 @@ notepad config.yaml
 
 Notepad mở ra. Điền **`cvv`** (3 số trên thẻ), rồi Save và đóng.
 
-Các thứ khác để yên. Tên, địa chỉ, email và số điện thoại đã có trong file. Để nguyên `mode: test` và `dry_run: true`.
+Các thứ khác để yên. Tên, địa chỉ, email và số điện thoại đã có trong file. Để nguyên `mode: launch` và `dry_run: true`.
 
 ### Bước 5 — Chạy thử
 
@@ -330,8 +330,8 @@ A practice script for buying an iPhone on **apple.com/vn**.
 
 It fills the whole checkout for you and then **stops at the Đặt hàng button**. It never clicks it. You do. `dry_run: true` is required and the script refuses to start without it.
 
-- **Practice now:** iPhone 18 Pro Max · 256GB · Burgundy (`mode: test`)
-- **Launch night:** iPhone Duo · 256GB · Night Sky — set `mode: launch` in `config.yaml`
+- **What the copied example buys:** iPhone Duo · 256GB · Star White (`mode: launch` is already set)
+- **To practice iPhone 18 Pro Max:** 256GB · Burgundy — set `mode: test`
 
 A full run takes about a minute. Roughly one second of that is our clicking; the rest is Apple's pages loading.
 
@@ -438,7 +438,7 @@ open -e config.yaml
 
 TextEdit opens. Fill in **`cvv`** (your card's 3 digits), then press ⌘S to save and close the window.
 
-Leave everything else alone. The name, address, email and phone are already in the file. Leave `mode: test` and `dry_run: true` alone.
+Leave everything else alone. The name, address, email and phone are already in the file. Leave `mode: launch` and `dry_run: true` alone.
 
 ### Step 5 — Do a practice run
 
@@ -537,7 +537,7 @@ notepad config.yaml
 
 Notepad opens. Fill in **`cvv`** (your card's 3 digits), then Save and close.
 
-Leave everything else alone. The name, address, email and phone are already in the file. Leave `mode: test` and `dry_run: true` alone.
+Leave everything else alone. The name, address, email and phone are already in the file. Leave `mode: launch` and `dry_run: true` alone.
 
 ### Step 5 — Do a practice run
 
