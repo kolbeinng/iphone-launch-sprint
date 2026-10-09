@@ -66,15 +66,15 @@ launch:
   target:
     year: duo
     model: duo
-  label: "iPhone Duo 256GB Night Sky"
+  label: "iPhone Duo 256GB Star White"
   family_url: "https://www.apple.com/vn/shop/buy-iphone/iphone-duo"
   product_prefs:
     colors:
-      - "nightsky"          # page reads 'Trời Đêm'
-      - 're:night.?sky|trời'
-      # Swap to star white:
-      # - "starwhite"       # page reads 'Trắng Ánh Sao'
-      # - 're:star.?white|ánh\s*sao'
+      - "starwhite"         # page reads 'Trắng Ánh Sao'
+      - 're:star.?white|ánh\s*sao'
+      # Swap to night sky:
+      # - "nightsky"        # page reads 'Trời Đêm'
+      # - 're:night.?sky|trời'
     storages: ["256GB", "256"]
     on_miss: wait_user
     user_pick_timeout_sec: 30
